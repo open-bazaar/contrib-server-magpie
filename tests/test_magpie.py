@@ -82,6 +82,7 @@ async def upstream():
     state = {
         "allow_write": False,
         "cursor": CURSOR,
+        "events": [],
         "route": {
             "id": "10",
             "time": STAMP,
@@ -115,18 +116,24 @@ async def upstream():
             },
             {"id": "team", "name": "Team route", "members": ["relay/gpt"]},
         ],
+        "gateway_keys": [{"id": "key1", "name": "Client", "masked": "masked"}],
+        "account_groups": [
+            {"id": "ag", "name": "Team accounts", "accounts": ["relay/ref1"]},
+        ],
     }
 
     async def magpie(request):
         if request.headers.get("Authorization") != "Bearer gateway-test-credential":
             return web.json_response({"error": "invalid key"}, status=401)
-        path = request.match_info["path"]
+        path = request.match_info.get("path")
+        if path is None:
+            return web.json_response({"version": "v0.1.4530"})
         if path == "route-events/snapshot":
             return web.json_response(
                 {
                     "cursor": state["cursor"],
-                    "active": 1,
-                    "routes": [state["route"]],
+                    "active": int(state["route"] is not None),
+                    "routes": [state["route"]] if state["route"] else [],
                 }
             )
         if path == "concurrency":
@@ -139,30 +146,15 @@ async def upstream():
                 }
             )
         if path == "route-events":
-            if (
-                request.headers.get("Last-Event-ID", request.query.get("after"))
-                == "expired"
-            ):
+            after = request.headers.get("Last-Event-ID", request.query.get("after"))
+            if after == "expired":
                 return web.json_response({"error": "snapshot_required"}, status=409)
-            event = json.dumps(
-                {
-                    "cursor": "feed:5",
-                    "active": 1,
-                    "route": {
-                        "id": "10",
-                        "time": STAMP,
-                        "agent": "codex",
-                        "phase": "responding",
-                        "provider": "backup",
-                        "model": "gpt",
-                        "attempt": 2,
-                    },
-                }
-            )
-            return web.Response(
-                text=f"id: feed:5\nevent: route\ndata: {event}\n\n",
-                content_type="text/event-stream",
-            )
+            events = [
+                f"id: {event['cursor']}\nevent: route\ndata: {json.dumps(event)}\n\n"
+                for event in state["events"]
+                if int(event["cursor"].split(":")[1]) > int(after.split(":")[1])
+            ]
+            return web.Response(text="".join(events), content_type="text/event-stream")
         if path == "usage":
             return web.json_response(
                 {**NOW, "calls": 8 if request.query.get("period") == "7d" else 3}
@@ -192,42 +184,100 @@ async def upstream():
                                     "remaining": 80,
                                     "resetsAt": STAMP,
                                 },
+                                {
+                                    "name": "7d",
+                                    "used": 36,
+                                    "remaining": 64,
+                                    "resetsAt": STAMP,
+                                },
                             ],
                         }
                     ]
                 }
             )
         if path == "admin/gateway-keys":
-            return web.json_response(
-                {"keys": [{"id": "key1", "name": "Client", "masked": "masked"}]}
-            )
+            return web.json_response({"keys": state["gateway_keys"]})
         if path == "admin/gateway-keys/models":
             return web.json_response(
-                {"models": [{"id": "relay/gpt", "name": "GPT"}], "accounts": []}
+                {
+                    "models": [
+                        {
+                            "id": "group/team",
+                            "name": "Team route",
+                            "group": True,
+                        },
+                        {
+                            "id": "relay/gpt",
+                            "name": "Relay GPT",
+                            "provider": "relay",
+                            "providerName": "Relay",
+                        },
+                        {
+                            "id": "backup/gpt",
+                            "name": "Backup GPT",
+                            "provider": "backup",
+                            "providerName": "Backup",
+                        },
+                    ],
+                    "accounts": [
+                        {"id": "relay/ref1", "name": "Relay account"},
+                        {"id": "backup/ref2", "name": "Backup account"},
+                    ],
+                }
             )
         if path == "admin/routing-groups":
-            return web.json_response({"groups": state["groups"], "models": []})
+            return web.json_response(
+                {
+                    "groups": state["groups"],
+                    "models": [
+                        {"id": "relay/gpt", "name": "Relay GPT"},
+                        {"id": "backup/gpt", "name": "Backup GPT"},
+                    ],
+                }
+            )
         if path == "admin/providers":
             return web.json_response(
                 {"providers": [{**PROVIDER, "models": state["models"]}]}
             )
         if path == "admin/account-groups":
-            return web.json_response(
-                {
-                    "groups": [
-                        {
-                            "id": "ag",
-                            "name": "Team accounts",
-                            "accounts": ["relay/ref1"],
-                        }
-                    ]
-                }
-            )
+            return web.json_response({"groups": state["account_groups"]})
         if request.method == "POST" and path.startswith("admin/"):
             if not state["allow_write"]:
                 return web.json_response({"error": "permission denied"}, status=403)
             payload = await request.json()
             state["write"] = (path, payload)
+            if path == "admin/gateway-keys/models-key":
+                key = next(
+                    k for k in state["gateway_keys"] if k["id"] == payload["key"]
+                )
+                key["models"] = payload["models"]
+            if path == "admin/account-groups/save":
+                group = next(
+                    (g for g in state["account_groups"] if g["id"] == payload["id"]),
+                    None,
+                )
+                if group is None:
+                    state["account_groups"].append(
+                        {**payload, "id": "new-account-group"}
+                    )
+                else:
+                    group.update(payload)
+            if path == "admin/account-groups/remove":
+                state["account_groups"] = [
+                    g for g in state["account_groups"] if g["id"] != payload["id"]
+                ]
+            if path == "admin/routing-groups/create":
+                state["groups"].append(payload)
+            if path == "admin/routing-groups/update":
+                group = next(g for g in state["groups"] if g["id"] == payload["from"])
+                group.update({k: v for k, v in payload.items() if k != "from"})
+            if path == "admin/routing-groups/switch":
+                group = next(g for g in state["groups"] if g["id"] == payload["id"])
+                group["disabled"] = not payload["on"]
+            if path == "admin/routing-groups/delete":
+                state["groups"] = [
+                    g for g in state["groups"] if g["id"] != payload["id"]
+                ]
             if path == "admin/provider/save":
                 existing = {model["id"] for model in state["models"]}
                 state["models"].extend(
@@ -261,6 +311,7 @@ async def upstream():
         return web.json_response({"error": "not found"}, status=404)
 
     app = web.Application()
+    app.router.add_get("/v1", magpie)
     app.router.add_route("*", "/v1/magpie/{path:.*}", magpie)
     runner = web.AppRunner(app)
     await runner.setup()
@@ -310,6 +361,14 @@ async def test_server_http_pages_and_public_management_contract(served, upstream
             assert "body from upstream must not be shown" not in page.text
         card = await client.get("/ui/magpie/overview")
         assert card.status_code == 200 and "Main gateway" in card.text
+        for label in (
+            "v0.1.4530",
+            "Tokens today",
+            "Live routing",
+            "Account quotas",
+            "Relay quota",
+        ):
+            assert label in card.text
         snapshot = await client.get(f"/ui/magpie/snapshot?gateway={gateway}")
         assert snapshot.json()["routes"][0]["queue"] == "slot"
         assert "not-rendered" not in snapshot.text
@@ -423,12 +482,33 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         picker = shell.get_by_role("button", name="Switch gateway: Main gateway")
         await expect(picker).to_be_visible()
         feed = shell.locator(".live-log")
-        destination = feed.locator(".live-row .destination .entity b")
+        active = feed.locator(".route-entry").first
+        current = active.locator(":scope > .live-row")
+        destination = current.locator(".destination .entity b")
         await expect(destination).to_have_text("relay")
         await feed.get_by_role("button", name="Queued").click()
         await expect(destination).to_be_visible()
-        state["cursor"] = "feed:5"
-        state["route"].update(provider="backup", phase="responding")
+        first = state["route"]
+        second_attempt = {
+            **first,
+            "provider": "backup",
+            "phase": "responding",
+            "attempt": 2,
+        }
+        state["events"] = [
+            {
+                "cursor": "feed:5",
+                "route": {
+                    **first,
+                    "phase": "attempt_done",
+                    "status": 429,
+                    "failed": True,
+                },
+            },
+            {"cursor": "feed:6", "route": second_attempt},
+        ]
+        state["cursor"] = "feed:6"
+        state["route"] = second_attempt
         state["active"].clear()
         await expect(destination).to_have_text("backup")
         await expect(feed.get_by_role("button", name="Queued")).to_have_attribute(
@@ -438,6 +518,22 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await expect(feed.locator(".empty-line")).to_be_visible()
         await feed.get_by_role("button", name="In progress").click()
         await expect(destination).to_be_visible()
+        failed = active.locator(".route-failures li")
+        await expect(failed.locator(".magpie-status")).to_have_text("Attempt failed")
+        await expect(failed.locator(".route-detail")).to_contain_text("HTTP 429")
+        await expect(current.locator(".route-detail")).to_contain_text(
+            "Switched destination"
+        )
+        assert await active.evaluate("""entry => {
+            const rows = entry.querySelectorAll('.live-row');
+            const first = rows[0], second = rows[1];
+            const bounds = (row, part) => row.querySelector(part).getBoundingClientRect();
+            return bounds(first, '.destination').left === bounds(second, '.destination').left &&
+                bounds(first, '.magpie-status').left === bounds(second, '.magpie-status').left &&
+                bounds(second, '.route-detail').top >= bounds(second, '.magpie-status').bottom;
+        }""")
+        if directory := os.environ.get("MAGPIE_SCREENSHOTS"):
+            await page.screenshot(path=Path(directory) / "routing-after-switch.png")
         frame = await (
             await page.locator("iframe.frame").element_handle()
         ).content_frame()
@@ -499,6 +595,16 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await expect(group.locator(".chev svg")).to_have_css(
             "transform", "matrix(-1, 0, 0, -1, 0, 0)"
         )
+        editor = shell.locator("details.manage-item").filter(has=group)
+        await expect(
+            editor.get_by_role("checkbox", name="Relay GPT", exact=False)
+        ).to_be_checked()
+        await expect(
+            editor.get_by_role("checkbox", name="Found GPT", exact=False)
+        ).not_to_be_checked()
+        await expect(editor.locator('textarea[name="members"]')).to_have_count(0)
+        if directory := os.environ.get("MAGPIE_SCREENSHOTS"):
+            await page.screenshot(path=Path(directory) / "routing-group-members.png")
         await shell.get_by_role("link", name="Gateway Keys", exact=True).click()
         await shell.locator("summary").filter(has_text="Create Gateway Key").click()
         creation = shell.locator('form:has(input[value="add-key"])')
@@ -569,6 +675,30 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await expect(shell.locator(".kpi .val").first).to_have_text("8")
         await frame.evaluate("history.forward()")
         await expect(destination).to_have_text("backup")
+        state["route"] = None
+        state["events"].extend(
+            [
+                {
+                    "cursor": "feed:7",
+                    "route": {**second_attempt, "phase": "done", "status": 200},
+                },
+                {
+                    "cursor": "feed:8",
+                    "route": {
+                        **first,
+                        "id": "11",
+                        "phase": "done",
+                        "status": 503,
+                        "failed": True,
+                    },
+                },
+            ]
+        )
+        state["cursor"] = "feed:8"
+        completed = feed.locator(".recent-routes .route-entry")
+        await expect(completed.first).to_contain_text("Error returned to agent")
+        await expect(completed.first).to_contain_text("HTTP 503")
+        await expect(completed.nth(1)).to_contain_text("Succeeded after retry")
         assert await frame.evaluate("performance.timeOrigin") == time_origin
         submissions = [
             request

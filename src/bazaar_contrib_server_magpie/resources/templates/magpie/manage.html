@@ -6,17 +6,17 @@
   <span class="chev" aria-hidden="true">{% include 'server/icons/chevron-down.svg' %}</span>
 </summary>
 {% endmacro %}
+{% macro picker(options, field, label) %}
+  <fieldset class="field routing-members">
+    <legend>{{ t.text('magpie.manage.' ~ label) }}</legend>
+    <div class="member-options">
+      {% for member in options %}
+      <label class="check"><input type="checkbox" name="{{ field }}" value="{{ member.id }}"{% if member.checked %} checked{% endif %}><span><b>{{ member.name }}</b>{% if member.id != member.name %}<small class="mono">{{ member.id }}</small>{% endif %}</span></label>
+      {% else %}<p class="muted">{{ t.text('magpie.manage.empty') }}</p>{% endfor %}
+    </div>
+  </fieldset>
+{% endmacro %}
 {% macro field(name, translation, initial='', required=false, type='text') %}<label class="field">{{ t.text('magpie.manage.' ~ translation) }}<input class="input" name="{{ name }}" type="{{ type }}" value="{{ initial }}"{% if required %} required{% endif %}{% if type == 'password' %} autocomplete="new-password"{% endif %}></label>{% endmacro %}
-{% macro catalog_rows(entries) %}
-<ul class="model-catalog">
-  {% for entry in entries %}<li><b>{{ entry.get('name') or entry.id }}</b>{% if entry.get('name') and entry.name != entry.id %}<code>{{ entry.id }}</code>{% endif %}</li>
-  {% else %}<li class="magpie-muted">{{ t.text('magpie.manage.empty') }}</li>{% endfor %}
-</ul>
-{% endmacro %}
-{% macro lines(name, translation, items, choices) %}
-  <label class="field">{{ t.text('magpie.manage.' ~ translation) }}<textarea class="input" name="{{ name }}" rows="3">{{ '\n' ~ (items | join('\n')) }}</textarea><span class="hint">{{ t.text('magpie.manage.' ~ translation ~ '_hint') }}</span></label>
-  {% if choices %}<details class="manage-catalog">{{ summary(t.text('magpie.manage.available')) }}{{ catalog_rows(choices) }}</details>{% endif %}
-{% endmacro %}
 {% macro form(operation, id='', provider='') %}
 <form class="manage-form{% if operation == 'test-models' %} model-tests{% endif %}" method="post" action="{{ action_url }}" novalidate
       hx-post="{{ action_url }}" hx-target="find [data-operation-slot]" hx-select="[data-operation-result]" hx-swap="innerHTML" hx-disable="findAll button"
@@ -71,7 +71,12 @@
     {% for item in config.get('keys') or [] %}
     <details class="manage-item">{{ summary(item.name, item.get('masked', ''), 'off' if item.get('off') else 'on') }}
       {% call form('rename-key', item.id) %}{{ field('name','name',item.name,true) }}{{ button('save') }}{% endcall %}
-      {% call form('models-key', item.id) %}{{ lines('models','allowed_models', item.get('models') or [], (catalog.get('models') or []) + (catalog.get('providers') or [])) }}{{ button('manage.save_models') }}{% endcall %}
+      {% call form('models-key', item.id) %}
+        {{ picker(picker_choices(gateway_models(catalog), item.get('models') or []), 'models', 'allowed_models') }}
+        <p class="hint">{{ t.text('magpie.manage.allowed_models_hint') }}</p>
+        <label class="field">{{ t.text('magpie.manage.model_pattern') }}<input class="input mono" name="model_pattern" placeholder="re:^gpt-"></label>
+        {{ button('manage.save_models') }}
+      {% endcall %}
       <div class="manage-actions">
         {% if not item.get('lan') %}{% call form('on-key' if item.get('off') else 'off-key', item.id) %}{{ button('enable' if item.get('off') else 'disable', '') }}{% endcall %}{% endif %}
         {% call form('rotate-key', item.id) %}{{ button('manage.rotate', '') }}{% endcall %}
@@ -137,19 +142,18 @@
   {% elif section == 'account-groups' %}
     {% set choices = catalog.get('accounts') or [] %}
     <details class="manage-item">{{ summary(t.text('magpie.manage.new_account_group')) }}
-      {% call form('save') %}{{ field('name','name',required=true) }}{{ lines('accounts','accounts',[],choices) }}{{ button('manage.create') }}{% endcall %}
+      {% call form('save') %}{{ field('name','name',required=true) }}{{ picker(picker_choices(choices, []), 'accounts', 'accounts') }}{{ button('manage.create') }}{% endcall %}
     </details>
     {% for item in config.get('groups') or [] %}
     <details class="manage-item">{{ summary(item.name, item.id) }}
-      {% call form('save',item.id) %}{{ field('name','name',item.name,true) }}{{ lines('accounts','accounts',item.get('accounts') or [],choices) }}{{ button('save') }}{% endcall %}
+      {% call form('save',item.id) %}{{ field('name','name',item.name,true) }}{{ picker(picker_choices(choices, item.get('accounts') or []), 'accounts', 'accounts') }}{{ button('save') }}{% endcall %}
       <div class="manage-actions">{% call form('remove',item.id) %}{{ button('remove','danger') }}{% endcall %}</div>
     </details>
     {% else %}<p class="manage-empty">{{ t.text('magpie.manage.empty') }}</p>
     {% endfor %}
   {% elif section == 'routing-groups' %}
-    {% set choices = config.get('models') or [] %}
     <details class="manage-item">{{ summary(t.text('magpie.manage.new_routing_group')) }}
-      {% call form('create') %}{{ field('id','id',required=true) }}{{ field('name','name',required=true) }}{{ field('note','note') }}{{ lines('members','members',[],choices) }}{{ button('manage.create') }}{% endcall %}
+      {% call form('create') %}{{ field('id','id',required=true) }}{{ field('name','name',required=true) }}{{ field('note','note') }}{{ picker(member_choices(config, []), 'members', 'members') }}{{ button('manage.create') }}{% endcall %}
     </details>
     {% for item in config.get('groups') or [] %}
     <details class="manage-item">{{ summary(item.name, item.id, 'auto' if item.get('auto') else ('off' if item.get('disabled') else 'on')) }}
@@ -159,7 +163,7 @@
         {% set members = group_members(item) %}
         {% call form('update') %}
           <input type="hidden" name="original_id" value="{{ item.id }}"><input type="hidden" name="original_members" value="{{ members | join('\n') }}">
-          {{ field('id','id',item.id,true) }}{{ field('name','name',item.name,true) }}{{ field('note','note',item.get('note','')) }}{{ lines('members','members',members,choices) }}{{ button('save') }}
+          {{ field('id','id',item.id,true) }}{{ field('name','name',item.name,true) }}{{ field('note','note',item.get('note','')) }}{{ picker(member_choices(config, members, item.id), 'members', 'members') }}{{ button('save') }}
         {% endcall %}
         <div class="manage-actions">
           {% call form('switch',item.id) %}<input type="hidden" name="on" value="{{ '1' if item.get('disabled') else '0' }}">{{ button('enable' if item.get('disabled') else 'disable','') }}{% endcall %}

@@ -7,7 +7,7 @@ that server's existing configuration:
 
 ```toml
 [[contribs]]
-package = "bazaar-contrib-server-magpie==0.3.0rc2"
+package = "bazaar-contrib-server-magpie==0.3.0rc3"
 [[contribs.enabled]]
 entry = "server-magpie"
 ```

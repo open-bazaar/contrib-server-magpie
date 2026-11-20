@@ -1,21 +1,82 @@
 {% extends 'server/base.html' %}
-{% from 'magpie/parts.html' import count, estimate, failure, pair %}
+{% from 'magpie/parts.html' import client, count, estimate, failure, integer, route_status with context %}
 {% block title %}{{ t.text('magpie.title') }}{% endblock %}
-{% block root %} data-fit{% endblock %}
+{% block root %} class="magpie" data-fit{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ asset('magpie.css') }}">{% endblock %}
 {% block top %}{% endblock %}
+{% macro metric(label, value, note='') %}
+  <div class="overview-metric"><span>{{ label }}</span><strong>{{ value }}</strong>{% if note %}<small>{{ note }}</small>{% endif %}</div>
+{% endmacro %}
 {% block body %}
-<section class="card log magpie-overview" hx-get="/ui/magpie/overview" hx-trigger="every 30s" hx-select=".magpie-overview" hx-swap="outerMorph">
-  <header class="card-hd"><h3>{{ t.text('magpie.title') }}</h3><span class="sub">{{ t.text('magpie.period.today') }}</span><a class="more" href="/magpie" target="_top">{{ t.text('magpie.tab.routing') }}{% include 'server/icons/chevron-right.svg' %}</a></header>
-  {% for card in cards %}
-  <div class="overview-gateway"><a href="/magpie?gateway={{ card.gateway.id }}" target="_top"><b>{{ card.gateway.name }}</b></a>
-    {% if card.error %}{{ failure(card.error, t) }}{% else %}<div>
-      {{ pair(t.text('magpie.usage.calls'), count(card.usage.get('calls'))) }}
-      {{ pair(t.text('magpie.live.active'), count(card.active)) }}
-      {{ pair(t.text('magpie.live.failures'), card.failed_attempts) }}
-      {{ pair(t.text('magpie.usage.cost'), estimate(card.usage.get('cost'))) }}
-    </div>{% endif %}
-  </div>
-  {% else %}<p class="empty-line muted">{{ t.text('magpie.no_gateways') }}</p>{% endfor %}
-</section>
+<div class="magpie-overview" hx-get="/ui/magpie/overview" hx-trigger="every 30s" hx-select=".magpie-overview" hx-swap="outerHTML">
+{% for card in cards %}
+  {% set id = 'magpie-overview-' ~ card.gateway.id %}
+  <article class="card overview-card" id="{{ id }}"{% if card.get('seen') %} data-topic="{{ live_topic }}" data-scope='{{ {"gateway": card.gateway.id} | tojson }}' data-seen='{{ card.seen | tojson }}'
+       hx-get="/ui/magpie/overview?gateway={{ card.gateway.id }}" hx-trigger="bazaar:change" hx-target="this" hx-select="#{{ id }}" hx-swap="outerHTML"{% endif %}>
+    <header class="overview-head">
+      <span class="overview-mark"><img class="magpie-mark" src="{{ asset('icons/magpie.svg') }}" alt=""></span>
+      <div class="overview-name"><h3>{{ t.text('magpie.overview.gateway') }}</h3><p>{{ card.gateway.name }}{% if card.get('version') %} · {{ card.version }}{% endif %}</p></div>
+      {% if card.get('version') or card.get('live', {}).get('cursor') %}<span class="status on"><span class="lantern on" aria-hidden="true"></span>{{ t.text('magpie.overview.online') }}</span>{% endif %}
+      <span class="overview-period muted">{{ t.text('magpie.period.today') }} · {{ t.text('magpie.overview.source') }}</span>
+      <a class="btn sm" href="/magpie?gateway={{ card.gateway.id }}" target="_top">{{ t.text('magpie.overview.open') }}{% include 'server/icons/chevron-right.svg' %}</a>
+    </header>
+    {% if card.get('error') %}{{ failure(card.error, t) }}{% else %}
+      {% if card.errors.get('usage') %}{{ failure(card.errors['usage'], t) }}{% endif %}
+      <div class="overview-metrics">
+        {{ metric(t.text('magpie.overview.calls'), integer(card.usage.get('calls'))) }}
+        {{ metric(t.text('magpie.overview.tokens'), count(totals_tokens(card.usage))) }}
+        {{ metric(t.text('magpie.overview.cost'), estimate(card.usage.get('cost'), 2)) }}
+        {{ metric(t.text('magpie.overview.active'), integer(card.live.concurrency.requests), t.text('magpie.overview.waiting', {'count': integer(card.live.concurrency.waiting)}) if card.live.concurrency.waiting is not none else '') }}
+      </div>
+      <div class="overview-lower">
+        <section>
+          <header class="overview-section"><h4>{{ t.text('magpie.overview.routing') }}</h4>{% if 'route-events/snapshot' not in card.errors %}<span class="status on"><span class="lantern on" aria-hidden="true"></span>{{ t.text('magpie.live.connected') }}</span>{% endif %}</header>
+          {% for path in ('route-events/snapshot', 'concurrency', 'route-events') if card.errors.get(path) %}{{ failure(card.errors[path], t) }}{% endfor %}
+          <table class="overview-routes">
+            <thead><tr><th scope="col">{{ t.text('magpie.request.source') }}</th><th scope="col">{{ t.text('magpie.overview.model') }}</th><th scope="col">{{ t.text('magpie.overview.stage') }}</th></tr></thead>
+            <tbody>
+              {% for row in (card.live.routes + card.live.unrouted)[:3] %}
+              {% set agent = row.get('agent', '') %}
+              {% set state = row.queue if row.get('queue') in ('slot', 'rpm', 'redact') else row.get('phase') or 'started' %}
+              {% for attempt in [row] + (row.get('failed_attempts') or []) %}
+              {% set provider = attempt.get('provider', '') %}
+              {% set model = attempt.get('served') or attempt.get('model', '') %}
+              <tr{% if not loop.first %} class="overview-attempt"{% endif %}>
+                <td>{% if loop.first %}{{ client(agent, source_name(agent, card.clients.get(agent, {}).get('name', '')), card.clients.get(agent, {}).get('icon', '')) }}{% endif %}</td>
+                <td>{% if provider %}<code>{{ provider }}{% if model %}/{{ model }}{% endif %}</code>{% else %}<span class="muted">{{ t.text('magpie.overview.unassigned') }}</span>{% endif %}</td>
+                <td>{{ route_status(attempt, state if loop.first else 'attempt_failed', t) }}</td>
+              </tr>
+              {% endfor %}
+              {% else %}<tr><td class="muted" colspan="3">{{ t.text('magpie.live.empty') }}</td></tr>{% endfor %}
+            </tbody>
+          </table>
+        </section>
+        <section>
+          <header class="overview-section"><h4>{{ t.text('magpie.overview.quotas') }}</h4><span class="overview-cached muted">{{ t.text('magpie.overview.cached') }}</span></header>
+          {% if card.errors.get('quotas') %}{{ failure(card.errors['quotas'], t) }}{% else %}
+          {% set shown = namespace(count=0) %}
+          {% for quota in card.quotas %}
+            {% for window in (quota.get('windows') or []) if shown.count < 2 %}
+              {% set used = window.get('used') %}
+              {% set percent = 100 - used if used is number else none %}
+              {% set measured = percent is not none and not (window.get('unlimited') or window.get('text') or window.get('balance') is not none) %}
+              {% set reading = t.text('magpie.quota.unlimited') if window.get('unlimited') else (t.text('magpie.quota.remaining', {'percent': '%g' | format(percent)}) if measured else window.get('display') or window.get('text')) %}
+              {% if reading %}
+              {% set shown.count = shown.count + 1 %}
+              <div class="quota-window overview-quota">
+                <span>{{ quota.get('name') or quota.provider }} · {{ window.name }}</span><span class="mono">{{ reading }}</span>
+                {% if measured %}<div class="quota-meter" style="--bar-size:{{ percent }}%" role="meter" aria-label="{{ window.name }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ percent }}"><i></i></div>{% endif %}
+              </div>
+              {% endif %}
+            {% endfor %}
+          {% endfor %}
+          {% if not shown.count %}<p class="muted overview-quota-note">{{ t.text('magpie.quota.empty') }}</p>{% endif %}
+          {% if shown.count %}<p class="muted overview-quota-note">{{ t.text('magpie.quota.hint') }}</p>{% endif %}
+          {% endif %}
+        </section>
+      </div>
+    {% endif %}
+  </article>
+{% else %}<section class="card"><p class="empty-line muted">{{ t.text('magpie.no_gateways') }}</p></section>{% endfor %}
+</div>
 {% endblock %}

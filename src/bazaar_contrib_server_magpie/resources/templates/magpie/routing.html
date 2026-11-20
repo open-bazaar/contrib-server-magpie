@@ -1,4 +1,4 @@
-{% from 'magpie/parts.html' import client, provider, pair, integer, count, estimate, failure, flag, entry_link with context %}
+{% from 'magpie/parts.html' import provider, pair, integer, count, estimate, failure with context %}
 <main class="content gateway-content">
   <div class="activity-columns">
     <div class="activity-column">
@@ -44,15 +44,6 @@
           {{ pair(t.text('magpie.usage.cost'), estimate(today.get('cost'), 2)) }}
         </div>
         {% endif %}
-      </section>
-      <section class="card summary-card">
-        <header class="card-hd"><h3>{{ t.text('magpie.live.latest') }}</h3></header>
-        {% if latest %}
-        <a class="recent-request" href="{{ entry_link(latest, 0, {'via': 'through'}, target) }}" aria-label="{{ t.text('magpie.live.view_latest') }}">
-          <span class="recent-head">{{ client(latest.agent, source_name(latest.agent, latest.get('agentName','')), latest.get('icon','')) }}<time class="mono" datetime="{{ latest.t }}" title="{{ stamp(latest.t) | clock }}">{{ stamp(latest.t) | time }}</time></span>
-          <span class="recent-result">{{ flag(outcome(latest), t) }}{% include 'server/icons/chevron-right.svg' %}</span>
-        </a>
-        {% else %}<p class="empty-line muted">{{ t.text('magpie.request.empty') }}</p>{% endif %}
       </section>
     </aside>
   </div>

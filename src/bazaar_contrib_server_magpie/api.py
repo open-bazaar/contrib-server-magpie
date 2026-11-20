@@ -1,5 +1,6 @@
 """Calls made with the selected gateway's one Key, on the Server only."""
 
+import json
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
 from typing import Any
@@ -46,7 +47,8 @@ class Magpie:
         try:
             async with self.session.request(
                 "GET" if body is None else "POST",
-                connection.gateway.endpoint + PREFIX + path,
+                connection.gateway.endpoint
+                + (path if path.startswith("/") else PREFIX + path),
                 headers=headers,
                 params=params,
                 json=body,
@@ -67,3 +69,21 @@ class Magpie:
     async def write(self, connection: Connection, path: str, body: Data) -> Data:
         async with self.request(connection, "admin/" + path, body=body) as response:
             return await response.json()
+
+    async def route_changes(
+        self, connection: Connection, after: str, through: str
+    ) -> list[Data] | None:
+        changes = []
+        async with self.request(
+            connection, EVENTS, params={"after": after}
+        ) as response:
+            async for line in response.content:
+                if not line.startswith(b"data: "):
+                    continue
+                event = json.loads(line.removeprefix(b"data: "))
+                if "route" not in event:
+                    return None
+                changes.append(event["route"])
+                if event["cursor"] == through:
+                    return changes
+        return None

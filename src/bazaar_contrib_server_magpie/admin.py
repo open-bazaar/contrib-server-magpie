@@ -83,6 +83,36 @@ def group_members(group: Data) -> list[str]:
     return [member for member in (group.get("members") or []) if member not in matched]
 
 
+def member_choices(config: Data, members: list[str], group: str = "") -> list[Data]:
+    groups = [
+        {"id": f"group/{item['id']}", "name": item.get("name") or item["id"]}
+        for item in config.get("groups") or ()
+        if item["id"] != group
+    ]
+    return picker_choices([*groups, *(config.get("models") or ())], members)
+
+
+def picker_choices(entries: list[Data], selected: list[str]) -> list[Data]:
+    choices = {item["id"]: item.get("name") or item["id"] for item in entries}
+    return [
+        {"id": value, "name": choices.get(value, value), "checked": value in selected}
+        for value in dict.fromkeys([*selected, *choices])
+    ]
+
+
+def gateway_models(catalog: Data) -> list[Data]:
+    models = catalog.get("models") or []
+    wildcards = {
+        f"{provider}/*": item.get("providerName") or provider
+        for item in [*models, *(catalog.get("providers") or [])]
+        if (provider := "group" if item.get("group") else item.get("provider"))
+    }
+    return [
+        *({"id": value, "name": name} for value, name in wildcards.items()),
+        *models,
+    ]
+
+
 def provider_models(provider: Data) -> list[Data]:
     can_test = not provider.get("modelTest")
     deciders = set(provider.get("deciders") or ())
@@ -175,7 +205,10 @@ def command(section: str, action: str, form: FormData) -> tuple[str, Data]:
     def lines(name: str) -> list[str]:
         return list(
             dict.fromkeys(
-                text.strip() for text in value(name).splitlines() if text.strip()
+                text.strip()
+                for item in form.getlist(name)
+                for text in str(item).splitlines()
+                if text.strip()
             )
         )
 
@@ -197,7 +230,10 @@ def command(section: str, action: str, form: FormData) -> tuple[str, Data]:
             if action == "rename-key":
                 body["name"] = value("name", required=True)
             if action == "models-key":
-                body["models"] = lines("models")
+                models = lines("models")
+                if (pattern := value("model_pattern")) and pattern not in models:
+                    models.append(pattern)
+                body["models"] = models
             return f"gateway-keys/{action}", body
     elif section == "provider-keys":
         if action in ("add", "rename", "replace", "on", "off", "remove"):
@@ -222,8 +258,9 @@ def command(section: str, action: str, form: FormData) -> tuple[str, Data]:
             body = {"id": value("id", required=True)}
             if action in ("create", "update"):
                 body.update(name=value("name", required=True), note=value("note"))
-                if action == "create" or value("members") != value("original_members"):
-                    body["members"] = lines("members")
+                members = lines("members")
+                if action == "create" or members != lines("original_members"):
+                    body["members"] = members
                 if action == "update":
                     body["from"] = value("original_id", required=True)
             elif action == "switch":

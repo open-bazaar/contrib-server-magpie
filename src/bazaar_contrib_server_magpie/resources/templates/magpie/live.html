@@ -4,14 +4,21 @@
      hx-get="/ui/magpie/live?gateway={{ selected.id }}" hx-trigger="bazaar:change" hx-target="this" hx-swap="outerHTML">
   {% if errors.get('route-events/snapshot') %}{{ failure(errors['route-events/snapshot'], t) }}{% endif %}
   {% if errors.get('concurrency') %}{{ failure(errors['concurrency'], t) }}{% endif %}
+  {% if errors.get('route-events') %}{{ failure(errors['route-events'], t) }}{% endif %}
   {% set items = live.routes + live.unrouted %}
   {% for item in items %}
   {% set state = item.queue if item.get('queue') in ('slot', 'rpm', 'redact') else item.get('phase') or 'started' %}
   {% set queued = state in ('slot', 'rpm') %}
   {% if queued %}{% set shown.queue = true %}{% else %}{% set shown.work = true %}{% endif %}
-  {{ route(item, clients, providers, t, state, 'queue' if queued else 'work') }}
+  {{ route(item, clients, providers, t, state, 'queue' if queued else 'work', selected.id) }}
   {% endfor %}
   {% if not (errors.get('route-events/snapshot') and errors.get('concurrency')) %}
   <p class="empty-line muted" x-show="filter === 'all' ? {{ (not items) | tojson }} : filter === 'work' ? {{ (not shown.work) | tojson }} : {{ (not shown.queue) | tojson }}">{{ t.text('magpie.live.empty') }}</p>
+  {% endif %}
+  {% if live.recent %}
+  <section class="recent-routes" x-show="filter === 'all'">
+    <h4>{{ t.text('magpie.live.recent') }}</h4>
+    {% for item in live.recent %}{{ route(item, clients, providers, t, item.result, 'recent', selected.id) }}{% endfor %}
+  </section>
   {% endif %}
 </div>

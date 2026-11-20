@@ -45,7 +45,7 @@ async def served(tmp_path, monkeypatch):
 
 
 @asynccontextmanager
-async def serving():
+async def serving(plugins=PLUGINS):
     urls: list[str] = []
     passwords: list[str] = []
 
@@ -62,7 +62,7 @@ async def serving():
         yield
 
     config = await asyncio.to_thread(
-        load, [ContribSpec(contrib=name, config=options) for name, options in PLUGINS]
+        load, [ContribSpec(contrib=name, config=options) for name, options in plugins]
     )
     config = config.model_copy(
         update={

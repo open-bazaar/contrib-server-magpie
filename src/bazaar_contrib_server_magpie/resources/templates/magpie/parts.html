@@ -3,8 +3,8 @@
 {% endmacro %}
 {% macro pair(label, item) %}<div class="kv-row"><span>{{ label }}</span><b class="v mono">{{ item if item is not none else '—' }}</b></div>{% endmacro %}
 {% macro flag(state, t, pill=false) %}
-{% set tone = 'work' if state in ('started','attempt','responding','upstream','attempt_done','redact') else ('on' if state in ('success','retried','done','on') else ('fail' if state in ('failed','handed_on') else 'off')) %}
-<span class="status magpie-status {{ tone }}{% if not pill or tone != 'work' %} bare{% endif %}"><span class="lantern {{ tone }}" aria-hidden="true"></span>{{ t.text('magpie.state.' ~ state) }}</span>
+{% set tone = 'work' if state in ('started','attempt','responding','upstream','attempt_done','redact') else ('on' if state in ('success','retried','done','on') else ('fail' if state in ('failed','handed_on','attempt_failed','agent_error') else 'off')) %}
+<span class="status magpie-status {{ tone }}{% if not pill %} bare{% endif %}"><span class="lantern {{ tone }}" aria-hidden="true"></span>{{ t.text('magpie.state.' ~ state) }}</span>
 {% endmacro %}
 {% macro count(value) %}{{ value | tokens if value is not none else '—' }}{% endmacro %}
 {% macro integer(value) %}{{ ('{:,}'.format(value)) if value is not none else '—' }}{% endmacro %}
@@ -24,16 +24,56 @@
 {% macro client(source, label, icon='') %}<span class="entity">{{ client_logo(source, icon) }}<b>{{ label or '—' }}</b></span>{% endmacro %}
 {% macro provider(key, name, model='', icon='') %}<span class="entity">{{ provider_logo(key, icon) }}<b>{{ name or key or '—' }}</b>{% if model %}<span class="model mono">{{ model }}</span>{% endif %}</span>{% endmacro %}
 {% macro entry_link(row, index, filters, target, offset=0) %}{{ target('requests', route=row.get('route_id'), row=index if not row.get('route_id') else none, offset=offset or none, **filters) }}{% endmacro %}
-{% macro route(item, clients, providers, t, state, group) %}
+{% macro route_status(item, state, t) %}
+{% set result = 'agent_error' if item.get('result') == 'failed' else item.get('result') %}
+{% set label = result or ('attempt_failed' if item.get('failed') else state) %}
+{% set attempt = item.get('attempt', 0) %}
+{% set status = item.get('status', 0) %}
+{% set show_attempt = attempt > 1 or (attempt and label == 'attempt_failed') %}
+{% set show_status = status >= 400 or (status and label == 'attempt_failed') %}
+<span class="route-status">
+  {{ flag(label, t, true) }}
+  {% if show_attempt or show_status %}
+  <small class="route-detail">
+    {%- if show_attempt -%}
+    {{ t.text('magpie.live.try_number', {'count': attempt}) }}{% if item.get('changed_destination') %} · {{ t.text('magpie.live.switched') }}{% endif %}{% if show_status %} · {% endif %}
+    {%- endif -%}
+    {% if show_status %}<code>HTTP {{ status }}</code>{% endif %}
+  </small>
+  {% endif %}
+</span>
+{% endmacro %}
+
+{% macro route_failures(item, providers, t) %}
+{% if item.get('failed_attempts') %}
+<ul class="route-failures">
+  {% for attempt in item.failed_attempts %}
+  {% set key = attempt.get('provider', '') %}
+  {% set details = providers.get(key, {}) %}
+  <li class="ev live-row">
+    <span class="destination">{{ provider(key, details.get('name') or attempt.get('providerName'), attempt.get('served') or attempt.get('model', ''), details.get('icon', '')) }}</span>
+    {{ route_status(attempt, 'attempt_failed', t) }}
+  </li>
+  {% endfor %}
+</ul>
+{% endif %}
+{% endmacro %}
+
+{% macro route(item, clients, providers, t, state, group, gateway) %}
 {% set source = item.get('agent', '') %}{% set destination = item.get('provider', '') %}
 {% set from_client = clients.get(source, {}) %}{% set to_provider = providers.get(destination, {}) %}
 {% set when = item.get('time') or item.get('started') %}
 {% set elapsed = item.get('elapsed') if item.get('elapsed') is not none else item.get('ms') %}
-<div class="ev live-row" x-show="filter === 'all' || filter === '{{ group }}'">
+{% set element = 'a' if item.get('recorded') else 'div' %}
+<div class="route-entry" x-show="filter === 'all' || filter === '{{ group }}'">
+<{{ element }} class="ev live-row"{% if element == 'a' %} href="{{ link('requests', gateway, route=item.route_id, via='through') }}"{% endif %}>
   <time class="tm"{% if when %} datetime="{{ when }}"{% endif %}>{{ (stamp(when) | time)[:5] if when else '—' }}</time>
   <span class="w origin entity"><span class="live-icon">{{ client_logo(source, from_client.get('icon', '')) }}</span><b>{{ source_name(source, from_client.get('name', '')) or '—' }}</b></span>
   <span class="direction">{% include 'server/icons/chevron-right.svg' %}</span>
-  <span class="destination">{% if destination %}<span class="entity"><span class="live-icon">{{ provider_logo(destination, to_provider.get('icon', '')) }}</span><b>{{ to_provider.get('name') or destination }}</b><span class="model mono">{{ item.get('model', '') }}</span></span>{% else %}<span class="muted">{{ t.text('magpie.state.' ~ state) }}</span>{% endif %}</span>
-  <div class="mt"><span>{{ flag(state, t, true) }}</span><span class="live-duration">{{ elapsed | duration('compact') if elapsed is not none else '—' }}</span></div>
+  <span class="destination">{% if destination %}{{ provider(destination, to_provider.get('name'), item.get('model', ''), to_provider.get('icon', '')) }}{% else %}<span class="muted">{{ t.text('magpie.state.' ~ state) }}</span>{% endif %}</span>
+  {{ route_status(item, state, t) }}
+  <span class="live-duration">{{ elapsed | duration('compact') if elapsed is not none else '—' }}</span>
+</{{ element }}>
+{{ route_failures(item, providers, t) }}
 </div>
 {% endmacro %}

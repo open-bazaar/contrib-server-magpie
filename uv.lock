@@ -219,7 +219,7 @@ wheels = [
 
 [[package]]
 name = "bazaar-contrib-server-magpie"
-version = "0.3.0rc2"
+version = "0.3.0rc3"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
