@@ -1,0 +1,55 @@
+{% from 'magpie/parts.html' import client, provider, integer, count, estimate, failure with context %}
+<main class="content gateway-content usage-content" hx-boost:inherited="false">
+  <nav class="seg period-seg" aria-label="{{ t.text('magpie.period.title') }}" title="{{ t.text('magpie.period.gateway_clock') }}">
+    {% for choice in ('today', '7d') %}<a class="segment{% if period == choice %} on{% endif %}" href="{{ target('usage', period=choice) }}"{% if period == choice %} aria-current="true"{% endif %}>{{ t.text('magpie.period.' ~ choice) }}</a>{% endfor %}
+  </nav>
+  {% if errors.get('usage') %}{{ failure(errors['usage'], t) }}{% else %}
+  <div class="kpis">
+    {% for label, icon, total in [
+      ('calls', 'magpie/icons/activity.svg', integer(usage.get('calls'))),
+      ('errors', 'magpie/icons/triangle-alert.svg', integer(usage.get('errors'))),
+      ('tokens', 'magpie/icons/coins.svg', count(totals_tokens(usage))),
+      ('cost', 'magpie/icons/coins.svg', estimate(usage.get('cost'), 2))
+    ] %}<section class="card kpi"><div class="lbl">{% include icon %}{{ t.text('magpie.usage.' ~ label) }}</div><div class="val">{{ total }}</div></section>{% endfor %}
+  </div>
+  {% endif %}
+  <div class="activity-columns usage-grid">
+    <div class="activity-column">
+      <section class="card" aria-labelledby="usage-trend">
+        <header class="card-hd"><h3 id="usage-trend">{{ t.text('magpie.usage.trend') }}</h3><span class="sub">{{ t.text('magpie.usage.' ~ ('hour' if usage.get('bucket') == 'hour' else 'day')) }}</span></header>
+        {% if bars %}
+        {% set stride = 6 if usage.get('bucket') == 'hour' else (2 if bars | length <= 8 else (bars | length) // 4) %}
+        <div class="trend" role="img" aria-label="{{ t.text('magpie.usage.trend') }}">
+          <div class="trend-scale"><span>{{ integer(peak) }}</span><span>{{ integer(peak // 2) }}</span><span>0</span></div>
+          <div class="trend-bars">{% for bar in bars %}<span style="--bar-size:{{ bar.height }}%" title="{{ bar.label }}: {{ integer(bar.calls) }}"></span>{% endfor %}</div>
+          <div class="trend-labels">{% for bar in bars %}{% if loop.index0 % stride == 0 %}<span style="--label-position:{{ loop.index0 * 100 / (bars | length) }}%">{{ bar.label ~ ':00' if usage.get('bucket') == 'hour' and ':' not in bar.label else bar.label }}</span>{% endif %}{% endfor %}</div>
+        </div>
+        {% else %}<p class="empty-line muted">{{ t.text('magpie.usage.empty') }}</p>{% endif %}
+      </section>
+      <section class="card log breakdown" aria-labelledby="usage-agents">
+        <header class="card-hd"><h3 id="usage-agents">{{ t.text('magpie.usage.agents') }}</h3></header>
+        {% for row in usage.get('agents') or [] %}<div class="ev usage-row">{{ client(row.id, source_name(row.id, row.get('name','')), row.get('icon','')) }}<span class="mt"><span>{{ count(totals_tokens(row)) }} Token</span><span>{{ estimate(row.get('cost'), 2) }}</span></span></div>
+        {% else %}<p class="empty-line muted">{{ t.text('magpie.usage.empty') }}</p>{% endfor %}
+      </section>
+    </div>
+    <section class="card quotas-card" aria-labelledby="quota-title">
+      <header class="card-hd" title="{{ t.text('magpie.quota.hint') }}"><h3 id="quota-title">{{ t.text('magpie.quota.title') }}</h3></header>
+      {% if errors.get('quotas') %}{{ failure(errors['quotas'], t) }}{% else %}
+      {% for quota in quotas %}
+      <div class="quota-account">
+        <div class="quota-hd">{{ provider(quota.provider, quota.name) }}<span class="quota-plan muted">{{ quota.get('plan', '') }}</span></div>
+        {% if quota.get('balance') %}<div class="quota-window"><span>{{ t.text('magpie.quota.balance') }}</span><span class="mono">{{ quota.balance }}</span></div>{% endif %}
+        {% for window in quota.windows or [] %}
+        {% set usage_label = t.text('magpie.quota.used', {'percent': '%g' | format(window.used)}) %}
+        <div class="quota-window"><span>{{ window.name }}</span><span class="mono">{{ t.text('magpie.quota.unlimited') if window.get('unlimited') else (window.get('display') or usage_label) }}</span>
+          {% if not (window.get('unlimited') or window.get('text') or window.get('balance') is not none) %}<div class="quota-meter" style="--bar-size:{{ window.used }}%" role="meter" aria-label="{{ window.name }}" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ window.used }}"><i></i></div>{% endif %}
+          {% if window.get('resetsAt') %}<small>{{ t.text('magpie.quota.resets') }} {{ stamp(window.resetsAt) | moment }}</small>{% endif %}
+        </div>
+        {% endfor %}
+        {% if quota.get('readDeferred') or quota.get('error') or not (quota.windows or quota.get('balance')) %}<p class="quota-note muted">{{ t.text('magpie.quota.unavailable') }}</p>{% endif %}
+      </div>
+      {% else %}<p class="empty-line muted">{{ t.text('magpie.quota.empty') }}</p>{% endfor %}
+      {% endif %}
+    </section>
+  </div>
+</main>

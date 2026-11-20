@@ -1,0 +1,20 @@
+{% from 'magpie/parts.html' import failure %}
+<dialog class="magpie-drawer drawer edit" hx-boost:inherited="false" data-gateway-drawer data-close="{{ target() }}" aria-labelledby="gateway-title">
+  <form class="item" method="post" action="{{ target(gateway_edit=gateway_edit).replace('/ui/magpie/', '/ui/magpie/gateways') }}" novalidate>
+    <header class="d-hd"><img class="magpie-mark" src="{{ asset('icons/magpie.svg') }}" alt=""><h3 id="gateway-title">{{ t.text('magpie.' ~ gateway_edit ~ '_gateway') }}</h3><a class="icon-btn close" href="{{ target() }}" aria-label="{{ t.text('magpie.close') }}">{% include 'magpie/icons/close.svg' %}</a></header>
+    <div class="d-bd">
+      {% if gateway_error %}{{ failure((gateway_error, 0), t) }}{% endif %}
+      {% if gateway_edit == 'remove' %}
+      <p>{{ t.text('magpie.remove_gateway_hint', {'name': selected.name}) }}</p>
+      {% else %}
+      <label class="field"><span class="lbl">{{ t.text('magpie.gateway_name') }}</span><input class="input" name="name" required autofocus value="{{ gateway_form.get('name', selected.name if selected and gateway_edit == 'edit' else '') }}"></label>
+      <label class="field"><span class="lbl">{{ t.text('magpie.endpoint') }}</span><input class="input" type="url" name="endpoint" required value="{{ gateway_form.get('endpoint', selected.endpoint if selected and gateway_edit == 'edit' else '') }}" placeholder="https://magpie.example.com"></label>
+      <label class="field"><span class="lbl">{{ t.text('magpie.gateway_key') }}</span><input class="input" type="password" name="key" autocomplete="new-password"{% if gateway_edit == 'add' %} required{% endif %}>{% if gateway_edit == 'edit' %}<span class="hint">{{ t.text('magpie.edit_key_hint') }}</span>{% endif %}</label>
+      {% endif %}
+    </div>
+    <footer class="d-ft">
+      {% if gateway_edit == 'edit' %}<a class="btn danger" href="{{ target(gateway_edit='remove') }}">{{ t.text('magpie.remove_gateway') }}</a>{% endif %}
+      <a class="btn" href="{{ target() }}">{{ t.text('magpie.cancel') }}</a><button class="btn {{ 'danger' if gateway_edit == 'remove' else 'primary' }}" type="submit">{{ t.text('magpie.' ~ ('add' if gateway_edit == 'add' else 'remove' if gateway_edit == 'remove' else 'save')) }}</button>
+    </footer>
+  </form>
+</dialog>

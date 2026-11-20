@@ -1,0 +1,51 @@
+[project]
+name = "bazaar-contrib-server-magpie"
+version = "0.3.0rc1"
+description = "Magpie routing, usage and gateway administration in Bazaar Server"
+readme = "README.md"
+requires-python = ">=3.15"
+dependencies = [
+    "aiohttp>=3.13.0,<4",
+    "bazaar-core~=0.3.0rc32",
+    "bazaar-contrib-schema~=0.3.0rc30",
+    "bazaar-contrib-server~=0.3.0rc15",
+    "bazaar-contrib-server-database~=0.3.0rc1",
+    "bazaar-contrib-server-overview~=0.3.0rc5",
+    "bazaar-contrib-storage~=0.3.0rc30",
+    "pydantic>=2.12,<3",
+    "python-multipart>=0.0.32",
+    "starlette>=0.48",
+]
+
+[project.entry-points."bazaar_compute_node.contribs"]
+server-magpie = "bazaar_contrib_server_magpie:magpie"
+
+[project.urls]
+Repository = "https://github.com/open-bazaar/contrib-server-magpie"
+
+[build-system]
+requires = ["uv_build>=0.13.0,<0.14.0"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-p no:anyio"
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.ruff.lint]
+extend-select = ["ASYNC"]
+
+[dependency-groups]
+dev = [
+    "bazaar-contrib-http~=0.3.0rc1",
+    "bazaar-contrib-server-access~=0.3.0rc8",
+    "bazaar-contrib-server-migrations~=0.3.0rc2",
+    "bazaar-contrib-sqlite~=0.3.0rc10",
+    "bazaar-contrib-timer~=0.3.0rc32",
+    "httpx>=0.28,<1",
+    "playwright>=1.56,<2",
+    "pytest>=9,<10",
+    "pytest-asyncio>=1.3,<2",
+    "ruff>=0.9",
+]

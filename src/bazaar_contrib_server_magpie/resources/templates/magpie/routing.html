@@ -1,0 +1,76 @@
+{% from 'magpie/parts.html' import client, client_logo, provider, provider_logo, pair, integer, count, estimate, failure, route, flag, entry_link with context %}
+<main class="content gateway-content" hx-boost:inherited="false">
+  <div class="activity-columns">
+    <div class="activity-column">
+      <section class="card log live-log" aria-labelledby="routes-title">
+        <header class="log-hd">
+          <h3 id="routes-title">{{ t.text('magpie.live.title') }}</h3>
+          <span class="feed-state" data-live-connection role="status"></span>
+          <nav class="seg" aria-label="{{ t.text('magpie.live.title') }}">
+            {% for filter in ('all', 'work', 'queue') %}<button class="segment{% if loop.first %} on{% endif %}" type="button" data-route-filter="{{ filter }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ t.text('magpie.live.' ~ filter) }}</button>{% endfor %}
+          </nav>
+        </header>
+        {% if errors.get('route-events/snapshot') %}{{ failure(errors['route-events/snapshot'], t) }}{% endif %}
+        {% if errors.get('concurrency') %}{{ failure(errors['concurrency'], t) }}{% endif %}
+        <div data-live-routes{% if live.get('cursor') %} data-events="/ui/magpie/events?gateway={{ selected.id }}" data-snapshot="/ui/magpie/snapshot?gateway={{ selected.id }}" data-cursor="{{ live.cursor }}"{% endif %}
+             data-reconnect="{{ t.text('magpie.live.reconnecting') }}" data-unavailable="{{ t.text('magpie.live.unavailable') }}" data-timezone="{{ tz.key if tz else '' }}">
+          {% for item in live.routes %}{{ route(item, clients, providers, t) }}{% endfor %}
+          {% for item in live.unrouted %}{{ route(item, clients, providers, t) }}{% endfor %}
+        </div>
+        <p class="empty-line muted" data-empty-routes{% if live.routes or live.unrouted or (errors.get('route-events/snapshot') and errors.get('concurrency')) %} hidden{% endif %}>{{ t.text('magpie.live.empty') }}</p>
+        <template data-route-template>{{ route({}, clients, providers, t) }}</template>
+        {% for state in ('started','attempt','responding','slot','rpm','redact','upstream','attempt_done') %}
+        <template data-live-state="{{ state }}">{{ flag(state, t, true) }}</template>
+        {% endfor %}
+        {% for id in ((clients | list) + ['bazaar_contrib_codex','codex','claude','opencode']) | unique %}
+        {% set meta = clients.get(id, {}) %}<template data-live-client="{{ id }}" data-name="{{ source_name(id, meta.get('name', '')) }}">{{ client_logo(id, meta.get('icon', '')) }}</template>
+        {% endfor %}
+        {% for id, meta in providers.items() %}<template data-live-provider="{{ id }}" data-name="{{ meta.name }}">{{ provider_logo(id, meta.get('icon', '')) }}</template>{% endfor %}
+        <template data-live-client="">{{ client_logo('') }}</template><template data-live-provider="">{{ provider_logo('') }}</template>
+      </section>
+      <section class="card log daily-log" aria-labelledby="stats-title">
+        <header class="card-hd" title="{{ t.text('magpie.live.stats_hint') }}"><h3 id="stats-title">{{ t.text('magpie.live.stats') }}</h3>
+          {% if statistics %}<span class="sub">{{ t.text('magpie.live.attempt_count', {'count': integer(statistics | sum(attribute='tries'))}) }} · {{ t.text('magpie.live.failure_count', {'count': integer(statistics | sum(attribute='failed'))}) }}</span>{% endif %}
+        </header>
+        {% if errors.get('usage/requests') %}{{ failure(errors['usage/requests'], t) }}{% else %}
+        {% for speed in statistics %}
+        <a class="ev daily-row" href="{{ target('requests', provider=speed.provider, model=speed.model, via='through') }}">
+          <span class="daily-model">{{ provider(speed.provider, speed.get('provider_name'), speed.model, speed.get('icon','')) }}</span>
+          {% set reasons %}{% for reason, amount in speed.reasons.items() %}{{ t.text('magpie.reason.' ~ reason) }} {{ t.text('magpie.live.times', {'count': integer(amount)}) }}{% if not loop.last %} · {% endif %}{% endfor %}{% endset %}
+          <span class="d daily-reason" title="{{ reasons | trim }}">{{ reasons | trim }}</span>
+          <span class="mt daily-count"><span>{{ t.text('magpie.live.attempt_count', {'count': integer(speed.tries)}) }}</span><span class="{{ 'bad-text' if speed.failed else 'quiet' }}">{{ t.text('magpie.live.failure_count', {'count': integer(speed.failed)}) }}</span>{% include 'server/icons/chevron-right.svg' %}</span>
+        </a>
+        {% else %}<p class="empty-line muted">{{ t.text('magpie.live.no_stats') }}</p>{% endfor %}
+        {% endif %}
+      </section>
+    </div>
+    <aside class="activity-column" aria-label="{{ t.text('magpie.live.summary') }}">
+      <section class="card summary-card">
+        <header class="card-hd"><h3>{{ t.text('magpie.live.current') }}</h3></header>
+        <div class="side-body" title="{{ t.text('magpie.live.snapshot') }}">
+          {{ pair(t.text('magpie.live.work'), integer(live.concurrency.requests - live.concurrency.waiting if live.concurrency.requests is not none and live.concurrency.waiting is not none else none)) }}
+          {{ pair(t.text('magpie.live.queue'), integer(live.concurrency.waiting)) }}
+        </div>
+      </section>
+      <section class="card summary-card">
+        <header class="card-hd" title="{{ t.text('magpie.period.gateway_clock') }}"><h3>{{ t.text('magpie.live.usage') }}</h3><a class="more" href="{{ target('usage') }}">{{ t.text('magpie.live.view') }}{% include 'server/icons/chevron-right.svg' %}</a></header>
+        {% if errors.get('usage') %}{{ failure(errors['usage'], t) }}{% else %}
+        <div class="side-body">
+          {{ pair(t.text('magpie.tab.requests'), integer(today.get('calls'))) }}
+          {{ pair(t.text('magpie.usage.tokens'), count(totals_tokens(today))) }}
+          {{ pair(t.text('magpie.usage.cost'), estimate(today.get('cost'), 2)) }}
+        </div>
+        {% endif %}
+      </section>
+      <section class="card summary-card">
+        <header class="card-hd"><h3>{{ t.text('magpie.live.latest') }}</h3></header>
+        {% if latest %}
+        <a class="recent-request" href="{{ entry_link(latest, 0, {'via': 'through'}, target) }}" aria-label="{{ t.text('magpie.live.view_latest') }}">
+          <span class="recent-head">{{ client(latest.agent, source_name(latest.agent, latest.get('agentName','')), latest.get('icon','')) }}<time class="mono" datetime="{{ latest.t }}" title="{{ stamp(latest.t) | clock }}">{{ stamp(latest.t) | time }}</time></span>
+          <span class="recent-result">{{ flag(outcome(latest), t) }}{% include 'server/icons/chevron-right.svg' %}</span>
+        </a>
+        {% else %}<p class="empty-line muted">{{ t.text('magpie.request.empty') }}</p>{% endif %}
+      </section>
+    </aside>
+  </div>
+</main>

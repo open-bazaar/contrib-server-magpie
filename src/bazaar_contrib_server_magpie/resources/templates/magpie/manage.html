@@ -1,0 +1,156 @@
+{% from 'magpie/parts.html' import failure %}
+{% set action_url = target('manage', section=section).replace('/ui/magpie/', '/ui/magpie/manage') %}
+{% macro summary(label, reference='', state='') %}
+<summary class="mrow">
+  <span class="grow"><b>{{ label }}{% if state %}<span class="tag{% if state == 'on' %} done{% endif %}">{{ t.text('magpie.state.' ~ state) }}</span>{% endif %}</b>{% if reference %}<small class="mono">{{ reference }}</small>{% endif %}</span>
+  <span class="chev" aria-hidden="true">{% include 'server/icons/chevron-down.svg' %}</span>
+</summary>
+{% endmacro %}
+{% macro field(name, translation, initial='', required=false, type='text') %}<label class="field">{{ t.text('magpie.manage.' ~ translation) }}<input class="input" name="{{ name }}" type="{{ type }}" value="{{ initial }}"{% if required %} required{% endif %}{% if type == 'password' %} autocomplete="new-password"{% endif %}></label>{% endmacro %}
+{% macro catalog_rows(entries) %}
+<ul class="model-catalog">
+  {% for entry in entries %}<li><b>{{ entry.get('name') or entry.id }}</b>{% if entry.get('name') and entry.name != entry.id %}<code>{{ entry.id }}</code>{% endif %}</li>
+  {% else %}<li class="magpie-muted">{{ t.text('magpie.manage.empty') }}</li>{% endfor %}
+</ul>
+{% endmacro %}
+{% macro lines(name, translation, items, choices) %}
+  <label class="field">{{ t.text('magpie.manage.' ~ translation) }}<textarea class="input" name="{{ name }}" rows="3">{{ '\n' ~ (items | join('\n')) }}</textarea><span class="hint">{{ t.text('magpie.manage.' ~ translation ~ '_hint') }}</span></label>
+  {% if choices %}<details class="manage-catalog">{{ summary(t.text('magpie.manage.available')) }}{{ catalog_rows(choices) }}</details>{% endif %}
+{% endmacro %}
+{% macro form(operation, id='', provider='') %}
+<form class="manage-form{% if operation == 'test-models' %} model-tests{% endif %}" method="post" action="{{ action_url }}" novalidate data-operation data-unavailable="{{ t.text('magpie.error.unknown_result') }}"{% if operation in ('remove-key','remove','delete','rotate-key') %} data-confirm="{{ t.text('magpie.manage.confirm_' ~ ('rotate' if operation == 'rotate-key' else 'remove')) }}"{% endif %}>
+  <input type="hidden" name="operation" value="{{ operation }}">{% if id %}<input type="hidden" name="id" value="{{ id }}">{% endif %}{% if provider %}<input type="hidden" name="provider" value="{{ provider }}">{% endif %}
+  {{ caller() }}<div data-operation-slot aria-live="polite"></div>
+</form>
+{% endmacro %}
+{% macro button(label, style='primary') %}<button class="btn sm {{ style }}" type="submit">{{ t.text('magpie.' ~ label) }}</button>{% endmacro %}
+<main class="content gateway-content" hx-boost:inherited="false">
+<nav class="seg period-seg manage-seg" aria-label="{{ t.text('magpie.tab.manage') }}">
+  {% for pane in sections %}<a class="segment{% if section == pane %} on{% endif %}" href="{{ target('manage', section=pane) }}"{% if section == pane %} aria-current="page"{% endif %}>{{ t.text('magpie.manage.' ~ pane) }}</a>{% endfor %}
+</nav>
+<section class="card log management{% if section == 'models' %} model-management{% endif %}" aria-labelledby="manage-title">
+  <header class="log-hd"><h3 id="manage-title">{{ t.text('magpie.manage.' ~ section) }}</h3></header>
+  {% if errors.get(path) and errors[path][1] == 403 %}
+  <div class="notice error" role="alert"><p>{% include 'magpie/icons/triangle-alert.svg' %}<span><strong>{{ t.text('magpie.manage.forbidden_title', {'section': t.text('magpie.manage.' ~ section)}) }}</strong><span>{{ t.text('magpie.manage.forbidden_detail') }}</span></span></p></div>
+  {% elif errors.get(path) %}{{ failure(errors[path], t) }}{% else %}
+  <p class="manage-hint">{{ t.text('magpie.manage.' ~ section ~ '_hint') }}</p>
+  {% if errors.get('admin/gateway-keys/models') %}{{ failure(errors['admin/gateway-keys/models'], t) }}{% endif %}
+  {% if section == 'gateway-keys' %}
+    <details class="manage-item">{{ summary(t.text('magpie.manage.new_gateway_key')) }}
+      {% call form('add-key') %}
+        {{ field('name', 'name', required=true) }}
+        <fieldset class="field"><legend>{{ t.text('magpie.manage.key_type') }}</legend>
+          <div class="seg"><label><input type="radio" name="readOnly" value="0" checked><span>{{ t.text('magpie.manage.standard_key') }}</span></label><label><input type="radio" name="readOnly" value="1"><span>{{ t.text('magpie.manage.read_only') }}</span></label></div>
+        </fieldset>
+        {{ button('manage.create') }}
+      {% endcall %}
+    </details>
+    {% for item in config.get('keys') or [] %}
+    <details class="manage-item">{{ summary(item.name, item.get('masked', ''), 'off' if item.get('off') else 'on') }}
+      {% call form('rename-key', item.id) %}{{ field('name','name',item.name,true) }}{{ button('save') }}{% endcall %}
+      {% call form('models-key', item.id) %}{{ lines('models','allowed_models', item.get('models') or [], (catalog.get('models') or []) + (catalog.get('providers') or [])) }}{{ button('manage.save_models') }}{% endcall %}
+      <div class="manage-actions">
+        {% if not item.get('lan') %}{% call form('on-key' if item.get('off') else 'off-key', item.id) %}{{ button('enable' if item.get('off') else 'disable', '') }}{% endcall %}{% endif %}
+        {% call form('rotate-key', item.id) %}{{ button('manage.rotate', '') }}{% endcall %}
+        {% call form('remove-key', item.id) %}{{ button('remove', 'danger') }}{% endcall %}
+      </div>
+    </details>
+    {% endfor %}
+  {% elif section == 'provider-keys' or section == 'models' %}
+    {% for provider in config.get('providers') or [] %}
+    <details class="manage-item"{% if section == 'models' and (model_provider == provider.id or (not model_provider and loop.first)) %} open{% endif %}>{{ summary(provider.name or provider.id, provider.id if provider.name and provider.name != provider.id else '') }}
+      {% if section == 'models' %}
+        {% set chips = model_chips[provider.id] %}
+        {% call form('test-models', provider=provider.id) %}
+          {% if chips %}
+          <div class="chips provider-models" aria-label="{{ t.text('magpie.manage.models') }}">
+            {% for model in chips %}
+            {% if model.testable %}
+            <button class="chip{% if model.active %} active{% endif %}" type="submit" name="model" value="{{ model.id }}" aria-label="{{ t.text('magpie.manage.test_model', {'model': model.id}) }}" data-tip="{{ t.text('magpie.manage.test_model', {'model': model.id}) }}">
+              {{ model.name }}<span class="model-test-icon" aria-hidden="true">{% include 'magpie/icons/activity.svg' %}</span><span class="model-test-state" data-model-state aria-hidden="true"></span>
+            </button>
+            {% else %}<span class="chip{% if model.active %} active{% endif %}" data-tip="{{ model.id }}">{{ model.name }}</span>{% endif %}
+            {% endfor %}
+          </div>
+          {% else %}<p class="model-hint">{{ t.text('magpie.manage.no_models') }}</p>{% endif %}
+          {% if chips and chips | selectattr('testable') | list %}
+          <p class="model-hint">{{ t.text('magpie.manage.test_hint') }}</p>
+          {% elif provider.get('modelTest') %}<p class="model-hint">{{ t.text('magpie.manage.test_unavailable') }}</p>{% endif %}
+          {% if model_batch[provider.id] %}
+          <div class="model-test-actions">
+            <button class="btn sm" type="submit">{{ t.text('magpie.manage.test_models') }}</button>
+          </div>
+          {% endif %}
+          <p class="model-hint model-test-pending" role="status">{{ t.text('magpie.manage.testing') }}</p>
+        {% endcall %}
+        <div class="model-edit">
+          {% call form('add-model', provider=provider.id) %}
+          <div class="model-add">
+            <input class="input mono" name="models" aria-label="{{ t.text('magpie.manage.model_ids') }}" placeholder="{{ t.text('magpie.manage.model_ids') }}" autocomplete="off" required>
+            {{ button('manage.add_models') }}
+          </div>
+          {% endcall %}
+          {% call form('refresh', provider=provider.id) %}{{ button('manage.refresh_models', '') }}{% endcall %}
+        </div>
+        {% if not provider.get('chosen') and not provider.get('noModels') %}
+        <p class="model-hint model-pick-hint">{{ t.text('magpie.manage.add_models_mode') }}</p>
+        {% endif %}
+      {% else %}
+        <details class="manage-subitem">{{ summary(t.text('magpie.manage.new_provider_key')) }}
+        {% call form('add', provider=provider.id) %}{{ field('name', 'name') }}{{ field('key', 'provider_key', required=true, type='password') }}{{ button('manage.create') }}{% endcall %}</details>
+        {% for key in provider.get('keyList') or [] %}
+        <details class="manage-subitem">{{ summary(key.get('name') or key.id, key.masked, 'on' if key.on else 'off') }}
+          {% call form('rename',key.id,provider.id) %}{{ field('name','name',key.get('name','')) }}{{ button('save') }}{% endcall %}
+          {% call form('replace',key.id,provider.id) %}{{ field('key','provider_key',required=true,type='password') }}{{ button('manage.replace') }}{% endcall %}
+          <div class="manage-actions">
+            {% call form('off' if key.on else 'on',key.id,provider.id) %}{{ button('disable' if key.on else 'enable', '') }}{% endcall %}
+            {% call form('remove',key.id,provider.id) %}{{ button('remove','danger') }}{% endcall %}
+          </div>
+        </details>
+        {% endfor %}
+      {% endif %}
+    </details>
+    {% else %}<p class="manage-empty">{{ t.text('magpie.manage.empty') }}</p>{% endfor %}
+  {% elif section == 'account-groups' %}
+    {% set choices = catalog.get('accounts') or [] %}
+    <details class="manage-item">{{ summary(t.text('magpie.manage.new_account_group')) }}
+      {% call form('save') %}{{ field('name','name',required=true) }}{{ lines('accounts','accounts',[],choices) }}{{ button('manage.create') }}{% endcall %}
+    </details>
+    {% for item in config.get('groups') or [] %}
+    <details class="manage-item">{{ summary(item.name, item.id) }}
+      {% call form('save',item.id) %}{{ field('name','name',item.name,true) }}{{ lines('accounts','accounts',item.get('accounts') or [],choices) }}{{ button('save') }}{% endcall %}
+      <div class="manage-actions">{% call form('remove',item.id) %}{{ button('remove','danger') }}{% endcall %}</div>
+    </details>
+    {% else %}<p class="manage-empty">{{ t.text('magpie.manage.empty') }}</p>
+    {% endfor %}
+  {% elif section == 'routing-groups' %}
+    {% set choices = config.get('models') or [] %}
+    <details class="manage-item">{{ summary(t.text('magpie.manage.new_routing_group')) }}
+      {% call form('create') %}{{ field('id','id',required=true) }}{{ field('name','name',required=true) }}{{ field('note','note') }}{{ lines('members','members',[],choices) }}{{ button('manage.create') }}{% endcall %}
+    </details>
+    {% for item in config.get('groups') or [] %}
+    <details class="manage-item">{{ summary(item.name, item.id, 'auto' if item.get('auto') else ('off' if item.get('disabled') else 'on')) }}
+      {% if item.get('auto') %}
+        <ul class="model-catalog">{% for member in item.get('members') or [] %}<li><code>{{ member }}</code></li>{% endfor %}</ul>
+      {% else %}
+        {% set members = group_members(item) %}
+        {% call form('update') %}
+          <input type="hidden" name="original_id" value="{{ item.id }}"><input type="hidden" name="original_members" value="{{ members | join('\n') }}">
+          {{ field('id','id',item.id,true) }}{{ field('name','name',item.name,true) }}{{ field('note','note',item.get('note','')) }}{{ lines('members','members',members,choices) }}{{ button('save') }}
+        {% endcall %}
+        <div class="manage-actions">
+          {% call form('switch',item.id) %}<input type="hidden" name="on" value="{{ '1' if item.get('disabled') else '0' }}">{{ button('enable' if item.get('disabled') else 'disable','') }}{% endcall %}
+          {% call form('delete',item.id) %}{{ button('remove','danger') }}{% endcall %}
+        </div>
+      {% endif %}
+    </details>
+    {% endfor %}
+  {% endif %}
+  {% endif %}
+</section>
+<dialog class="dialog manage-confirm" data-operation-confirm role="alertdialog" aria-labelledby="operation-title" aria-describedby="operation-description">
+  <h3 id="operation-title"></h3>
+  <p id="operation-description"></p>
+  <form class="actions" method="dialog"><button class="btn" value="cancel" autofocus>{{ t.text('magpie.cancel') }}</button><button class="btn" value="confirm"></button></form>
+</dialog>
+</main>

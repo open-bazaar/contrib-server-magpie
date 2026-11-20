@@ -1,0 +1,24 @@
+{% extends 'server/base.html' %}
+{% from 'magpie/parts.html' import failure %}
+{% block title %}{{ t.text('magpie.title') }}{% endblock %}
+{% block root %} class="magpie"{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ asset('magpie.css') }}">{% endblock %}
+{% block body %}
+<main class="content" hx-boost:inherited="false">
+  <div data-operation-result>
+    {% if error %}{{ failure((error, upstream), t) }}
+    {% elif probes is defined and probes is not none %}
+    <ul class="model-probe-results" aria-label="{{ t.text('magpie.manage.test_results') }}">
+      {% for probe in probes %}
+      <li class="chip" data-probe="{{ probe.model }}" data-state="{{ probe.state }}" data-label="{{ t.text('magpie.manage.probe_' ~ probe.state) }}">
+        <b class="mono">{{ probe.model }}</b><span>{{ t.text('magpie.manage.probe_' ~ probe.state) }}{% if probe.status and probe.state == 'failed' %} · HTTP {{ probe.status }}{% endif %}{% if probe.protocol %} · {{ probe.protocol }}{% endif %}{% if probe.ms is not none %} · {{ (probe.ms ~ ' ms') if probe.ms < 1000 else (probe.ms | duration('compact')) }}{% endif %}</span>
+      </li>
+      {% endfor %}
+    </ul>
+    {% else %}
+    <div class="notice key-result"><b>{{ t.text('magpie.manage.copy_key') }}</b><p>{{ t.text('magpie.manage.key_once') }}</p><code>{{ secret }}</code></div>
+    {% endif %}
+  </div>
+  <a class="btn" href="{{ back }}">{{ t.text('magpie.close') }}</a>
+</main>
+{% endblock %}

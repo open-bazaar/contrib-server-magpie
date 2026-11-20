@@ -1,0 +1,87 @@
+name: Release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pypi-release
+  cancel-in-progress: false
+
+jobs:
+  checks:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: checks
+    runs-on: ubuntu-24.04
+    outputs:
+      artifact: ${{ steps.artifact.outputs.artifact-id }}
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.13.0'
+      - name: Read package version
+        id: version
+        run: echo "version=$(uv version --short)" >> "$GITHUB_OUTPUT"
+      - name: Build distributions
+        run: uv build --no-sources --python 3.15
+      - name: Verify wheel and sdist installations
+        run: |
+          for archive in ./dist/*.whl ./dist/*.tar.gz; do
+            uv run --no-project --isolated --python 3.15 --prerelease allow --with "$archive" python -c 'from importlib.metadata import entry_points; entry, = entry_points(group="bazaar_compute_node.contribs", name="server-magpie"); entry.load()'
+          done
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        id: artifact
+        with:
+          name: python-dist
+          path: dist/
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    environment:
+      name: pypi
+      url: https://pypi.org/project/bazaar-contrib-server-magpie/${{ needs.build.outputs.version }}/
+    permissions:
+      id-token: write
+    steps:
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          version: '0.13.0'
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          artifact-ids: ${{ needs.build.outputs.artifact }}
+          path: dist/
+      - name: Publish with Trusted Publishing
+        run: uv publish --trusted-publishing always
+
+  finalize:
+    needs: [build, publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+      - name: Push annotated release tag
+        env:
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          tag="v$VERSION"
+          if git rev-parse --verify --quiet "refs/tags/$tag" >/dev/null; then
+            test "$(git cat-file -t "refs/tags/$tag")" = tag
+            test "$(git rev-parse "refs/tags/$tag^{commit}")" = "$GITHUB_SHA"
+          else
+            git tag -a "$tag" "$GITHUB_SHA" -m "Release $tag"
+          fi
+          git push origin "refs/tags/$tag"

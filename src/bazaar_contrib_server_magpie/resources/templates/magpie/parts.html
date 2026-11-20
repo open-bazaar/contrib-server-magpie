@@ -1,0 +1,40 @@
+{% macro failure(error, t) %}
+<div class="notice error" role="alert"><p>{% include 'magpie/icons/triangle-alert.svg' %}<span>{% if error[1] %}<strong>HTTP {{ error[1] }}</strong>{% endif %}<span>{{ t.text('magpie.error.' ~ error[0]) }}</span></span></p></div>
+{% endmacro %}
+{% macro pair(label, item) %}<div class="kv-row"><span>{{ label }}</span><b class="v mono">{{ item if item is not none else '—' }}</b></div>{% endmacro %}
+{% macro flag(state, t, pill=false) %}
+{% set tone = 'work' if state in ('started','attempt','responding','upstream','attempt_done','redact') else ('on' if state in ('success','retried','done','on') else ('fail' if state in ('failed','handed_on') else 'off')) %}
+<span class="status magpie-status {{ tone }}{% if not pill or tone != 'work' %} bare{% endif %}"><span class="lantern {{ tone }}" aria-hidden="true"></span>{{ t.text('magpie.state.' ~ state) }}</span>
+{% endmacro %}
+{% macro count(value) %}{{ value | tokens if value is not none else '—' }}{% endmacro %}
+{% macro integer(value) %}{{ ('{:,}'.format(value)) if value is not none else '—' }}{% endmacro %}
+{% macro estimate(value, precision=4) %}{{ ('$' ~ (('%.' ~ precision ~ 'f') | format(value))) if value is not none else '—' }}{% endmacro %}
+{% macro client_logo(source, icon='') %}
+{% if source in ('bazaar_contrib_codex', 'codex') or icon == 'codex-color' %}<span class="entity-icon client-codex">{% include 'magpie/logos/codex.svg' %}</span>
+{% elif source == 'claude' or icon == 'claudecode-color' %}<span class="entity-icon client-claude">{% include 'magpie/logos/claudecode.svg' %}</span>
+{% elif source.startswith('opencode') or icon == 'opencode' %}<img class="entity-icon dark-mark" src="{{ asset('icons/opencode.svg') }}" alt="">
+{% else %}<span class="entity-icon generic-mark">{% include 'magpie/icons/activity.svg' %}</span>{% endif %}
+{% endmacro %}
+{% macro provider_logo(provider, icon='') %}
+{% set local = {'openrouter':'openrouter','anthropic':'anthropic','deepseek':'deepseek-color','kimi':'kimi','minimax':'minimax-color','zhipu':'zhipu-color','qwen':'qwen-color','workbuddy':'workbuddy-color','workbuddy-ai':'workbuddy-color','opencode-zen-free':'opencode','minimax-code':'minimax-color','minimax-code-global':'minimax-color'} %}
+{% set chosen = icon if icon in local.values() else local.get(provider) %}
+{% if chosen %}<img class="entity-icon{% if chosen in ('openrouter','anthropic','kimi','opencode') %} dark-mark{% endif %}" src="{{ asset('icons/' ~ chosen ~ '.svg') }}" alt="">
+{% else %}<span class="entity-icon generic-mark">{% include 'magpie/icons/coins.svg' %}</span>{% endif %}
+{% endmacro %}
+{% macro client(source, label, icon='') %}<span class="entity">{{ client_logo(source, icon) }}<b>{{ label or '—' }}</b></span>{% endmacro %}
+{% macro provider(key, name, model='', icon='') %}<span class="entity">{{ provider_logo(key, icon) }}<b>{{ name or key or '—' }}</b>{% if model %}<span class="model mono">{{ model }}</span>{% endif %}</span>{% endmacro %}
+{% macro entry_link(row, index, filters, target, offset=0) %}{{ target('requests', route=row.get('route_id'), row=index if not row.get('route_id') else none, offset=offset or none, **filters) }}{% endmacro %}
+{% macro route(item, clients, providers, t) %}
+{% set source = item.get('agent', '') %}{% set destination = item.get('provider', '') %}
+{% set from_client = clients.get(source, {}) %}{% set to_provider = providers.get(destination, {}) %}
+{% set when = item.get('time') or item.get('started') %}
+{% set state = item.queue if item.get('queue') in ('slot','rpm','redact') else item.get('phase') or 'started' %}
+{% set elapsed = item.get('elapsed') if item.get('elapsed') is not none else item.get('ms') %}
+<div class="ev live-row" data-route="{{ item.get('id', '') }}" data-phase="{{ state }}">
+  <time class="tm" data-live-time{% if when %} datetime="{{ when }}"{% endif %}>{{ (stamp(when) | time)[:5] if when else '—' }}</time>
+  <span class="w origin entity"><span class="live-icon" data-client-icon>{{ client_logo(source, from_client.get('icon', '')) }}</span><b data-source>{{ source_name(source, from_client.get('name', '')) or '—' }}</b></span>
+  <span class="direction">{% include 'server/icons/chevron-right.svg' %}</span>
+  <span class="destination"><span class="entity" data-destination{% if not destination %} hidden{% endif %}><span class="live-icon" data-provider-icon>{{ provider_logo(destination, to_provider.get('icon', '')) }}</span><b data-provider>{{ to_provider.get('name') or destination }}</b><span class="model mono" data-model>{{ item.get('model', '') }}</span></span><span class="muted" data-no-destination{% if destination %} hidden{% endif %}>{{ t.text('magpie.state.' ~ state) }}</span></span>
+  <div class="mt"><span data-state>{{ flag(state, t, true) }}</span><span class="live-duration" data-elapsed>{{ elapsed | duration('compact') if elapsed is not none else '—' }}</span></div>
+</div>
+{% endmacro %}

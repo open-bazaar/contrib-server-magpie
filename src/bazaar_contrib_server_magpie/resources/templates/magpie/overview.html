@@ -1,0 +1,21 @@
+{% extends 'server/base.html' %}
+{% from 'magpie/parts.html' import count, estimate, failure, pair %}
+{% block title %}{{ t.text('magpie.title') }}{% endblock %}
+{% block root %} data-fit{% endblock %}
+{% block head %}<link rel="stylesheet" href="{{ asset('magpie.css') }}">{% endblock %}
+{% block top %}{% endblock %}
+{% block body %}
+<section class="card log magpie-overview" hx-get="/ui/magpie/overview" hx-trigger="every 30s" hx-select=".magpie-overview" hx-swap="outerMorph">
+  <header class="card-hd"><h3>{{ t.text('magpie.title') }}</h3><span class="sub">{{ t.text('magpie.period.today') }}</span><a class="more" href="/magpie" target="_top">{{ t.text('magpie.tab.routing') }}{% include 'server/icons/chevron-right.svg' %}</a></header>
+  {% for card in cards %}
+  <div class="overview-gateway"><a href="/magpie?gateway={{ card.gateway.id }}" target="_top"><b>{{ card.gateway.name }}</b></a>
+    {% if card.error %}{{ failure(card.error, t) }}{% else %}<div>
+      {{ pair(t.text('magpie.usage.calls'), count(card.usage.get('calls'))) }}
+      {{ pair(t.text('magpie.live.active'), count(card.active)) }}
+      {{ pair(t.text('magpie.live.failures'), card.failed_attempts) }}
+      {{ pair(t.text('magpie.usage.cost'), estimate(card.usage.get('cost'))) }}
+    </div>{% endif %}
+  </div>
+  {% else %}<p class="empty-line muted">{{ t.text('magpie.no_gateways') }}</p>{% endfor %}
+</section>
+{% endblock %}
