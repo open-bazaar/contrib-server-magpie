@@ -1,6 +1,9 @@
 {% from 'magpie/parts.html' import failure %}
-<dialog class="magpie-drawer drawer edit" hx-boost:inherited="false" data-gateway-drawer data-close="{{ target() }}" aria-labelledby="gateway-title">
-  <form class="item" method="post" action="{{ target(gateway_edit=gateway_edit).replace('/ui/magpie/', '/ui/magpie/gateways') }}" novalidate>
+{% set action = target(gateway_edit=gateway_edit).replace('/ui/magpie/', '/ui/magpie/gateways') %}
+<dialog id="gateway-drawer-{{ gateway_edit }}" class="magpie-drawer drawer edit" aria-labelledby="gateway-title" x-data
+        x-init="$el.showModal()" @cancel.prevent="$el.querySelector('.close').click()" @click.self="$el.querySelector('.close').click()">
+  <form class="item" method="post" action="{{ action }}" novalidate
+        hx-post="{{ action }}" hx-target="this" hx-select=".magpie-drawer > form" hx-swap="outerHTML">
     <header class="d-hd"><img class="magpie-mark" src="{{ asset('icons/magpie.svg') }}" alt=""><h3 id="gateway-title">{{ t.text('magpie.' ~ gateway_edit ~ '_gateway') }}</h3><a class="icon-btn close" href="{{ target() }}" aria-label="{{ t.text('magpie.close') }}">{% include 'magpie/icons/close.svg' %}</a></header>
     <div class="d-bd">
       {% if gateway_error %}{{ failure((gateway_error, 0), t) }}{% endif %}

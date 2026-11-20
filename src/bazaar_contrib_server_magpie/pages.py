@@ -2,9 +2,12 @@
 
 import asyncio
 import json
+from collections.abc import Mapping
+from functools import partial
+from hashlib import sha256
 from urllib.parse import urlencode
 
-from bazaar_contrib_server import Pages, account
+from bazaar_contrib_server import Account, Pages, account
 from pydantic import AnyHttpUrl, ValidationError
 from starlette.exceptions import HTTPException
 from starlette.requests import Request
@@ -45,6 +48,7 @@ from .gateways import Connection, Gateway, Gateways
 
 VIEW = "magpie.view"
 MANAGE = "magpie.manage"
+LIVE = "magpie.routing"
 HOME = "/ui/magpie/"
 TABS = ("routing", "requests", "usage", "manage")
 PERIODS = ("today", "7d", "30d", "all")
@@ -66,6 +70,19 @@ def link(tab: str = "routing", gateway: str = "", **filters: str | int | None) -
 def require(request: Request, *points: str) -> None:
     if not all(account(request).allows(point) for point in points):
         raise HTTPException(403)
+
+
+def redirect(request: Request, address: str) -> Response:
+    if request.headers.get("HX-Request") == "true":
+        return Response(
+            status_code=204,
+            headers={
+                "HX-Location": json.dumps(
+                    {"path": address, "target": "body", "swap": "innerMorph show:top"}
+                )
+            },
+        )
+    return RedirectResponse(address, 303)
 
 
 def number(value: str) -> int:
@@ -92,6 +109,29 @@ def error_label(error: Rejected) -> str:
     )
 
 
+async def live_routes(read: admin.Read) -> Data:
+    snapshot, concurrency = await asyncio.gather(read(SNAPSHOT), read(CONCURRENCY))
+    return route_snapshot(snapshot, concurrency)
+
+
+def live_seen(live: Data, errors: dict[str, tuple[str, int]]) -> dict[str, str]:
+    state = (
+        live.get("cursor"),
+        live["routes"],
+        live["unrouted"],
+        errors.get(SNAPSHOT),
+        errors.get(CONCURRENCY),
+    )
+    return {"state": sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()}
+
+
+def routing_catalog(ledger: Data) -> Data:
+    return {
+        "clients": {row["id"]: row for row in ledger.get("agents") or []},
+        "providers": {row["id"]: row for row in ledger.get("providers") or []},
+    }
+
+
 class Views:
     def __init__(self, pages: Pages, gateways: Gateways, magpie: Magpie) -> None:
         self.pages = pages
@@ -101,6 +141,7 @@ class Views:
             Route("/", self.index),
             Route("/gateways", self.change_gateway, methods=["POST"]),
             Route("/manage", self.change_config, methods=["POST"]),
+            Route("/live", self.live),
             Route("/snapshot", self.snapshot),
             Route("/events", self.events),
             Route("/overview", self.overview),
@@ -115,6 +156,19 @@ class Views:
     async def index(self, request: Request) -> Response:
         require(request, VIEW)
         return await self.page(request)
+
+    async def read(
+        self,
+        connection: Connection,
+        errors: dict[str, tuple[str, int]],
+        path: str,
+        **params: str | int,
+    ) -> Data:
+        try:
+            return await self.magpie.read(connection, path, **params)
+        except Rejected as error:
+            errors[path] = (error_label(error), error.status)
+            return {}
 
     async def page(
         self,
@@ -147,12 +201,8 @@ class Views:
         async def read(path: str, **params: str | int) -> Data:
             nonlocal reached
             assert connection is not None
-            try:
-                data = await self.magpie.read(connection, path, **params)
-            except Rejected as error:
-                errors[path] = (error_label(error), error.status)
-                return {}
-            reached = True
+            data = await self.read(connection, errors, path, **params)
+            reached |= path not in errors
             return data
 
         values: Data = {}
@@ -163,9 +213,8 @@ class Views:
                 raise HTTPException(404)
         connection = await self.gateways.get(selected.id) if selected else None
         if connection and tab == "routing":
-            snapshot, active, ledger, today = await asyncio.gather(
-                read(SNAPSHOT),
-                read(CONCURRENCY),
+            live, ledger, today = await asyncio.gather(
+                live_routes(read),
                 read(REQUESTS, period="today", via="through", limit=1),
                 read(USAGE, period="today"),
             )
@@ -187,12 +236,13 @@ class Views:
                 None,
             )
             values.update(
-                live=route_snapshot(snapshot, active),
+                live=live,
+                seen=live_seen(live, errors),
+                live_topic=LIVE,
                 statistics=route_statistics(ledger, failed),
                 today=today,
                 latest=latest,
-                clients={row["id"]: row for row in ledger.get("agents") or []},
-                providers={row["id"]: row for row in ledger.get("providers") or []},
+                **routing_catalog(ledger),
             )
         elif connection and tab == "requests":
             values.update(await self.requests(request, read, period))
@@ -313,7 +363,7 @@ class Views:
             selected = (await self.connection(request)).gateway
         if action == "remove" and selected:
             await self.gateways.remove(selected.id)
-            return RedirectResponse(HOME, 303)
+            return redirect(request, HOME)
         try:
             address = endpoint(address)
             if not name or (action == "add" and not key):
@@ -331,7 +381,7 @@ class Views:
             await self.gateways.edit(selected.id, name, address, key)
         else:
             selected = await self.gateways.add(name, address, key)
-        return RedirectResponse(link(gateway=selected.id), 303)
+        return redirect(request, link(gateway=selected.id))
 
     async def change_config(self, request: Request) -> Response:
         require(request, VIEW, MANAGE)
@@ -377,7 +427,7 @@ class Views:
                     if operation == "add-model":
                         body = admin.add_models(provider, body["models"])
                         if not body:
-                            return RedirectResponse(back, 303)
+                            return redirect(request, back)
                     else:
                         models = admin.test_models(
                             admin.provider_models(provider), body.pop("model")
@@ -426,7 +476,39 @@ class Views:
                 secret=secret,
                 probes=probes,
             )
-        return RedirectResponse(back, 303)
+        return redirect(request, back)
+
+    async def live_state(
+        self, _: Account, scope: Mapping[str, str]
+    ) -> Mapping[str, object] | None:
+        connection = await self.gateways.get(scope["gateway"])
+        if connection is None:
+            return None
+        errors: dict[str, tuple[str, int]] = {}
+        live = await live_routes(partial(self.read, connection, errors))
+        return live_seen(live, errors)
+
+    async def live(self, request: Request) -> Response:
+        require(request, VIEW)
+        connection = await self.connection(request)
+        errors: dict[str, tuple[str, int]] = {}
+        read = partial(self.read, connection, errors)
+        live, ledger = await asyncio.gather(
+            live_routes(read),
+            read(REQUESTS, period="today", via="through", limit=1),
+        )
+        return await self.pages.render(
+            request,
+            "magpie/live.html",
+            selected=connection.gateway,
+            live=live,
+            seen=live_seen(live, errors),
+            live_topic=LIVE,
+            errors=errors,
+            stamp=stamp,
+            source_name=source_name,
+            **routing_catalog(ledger),
+        )
 
     async def snapshot(self, request: Request) -> Response:
         require(request, VIEW)

@@ -40,8 +40,6 @@
 "magpie.live.queued" = "排队（快照）"
 "magpie.live.tools" = "工具运行（快照）"
 "magpie.live.connected" = "实时"
-"magpie.live.reconnecting" = "正在重连"
-"magpie.live.unavailable" = "实时连接不可用"
 "magpie.live.empty" = "暂无进行中的请求"
 "magpie.live.stats" = "今日路由统计"
 "magpie.live.stats_hint" = "按供应商和模型统计经过此网关的尝试，每次重试单独计数。"

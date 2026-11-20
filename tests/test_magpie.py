@@ -81,6 +81,26 @@ PROVIDER = {
 async def upstream():
     state = {
         "allow_write": False,
+        "cursor": CURSOR,
+        "route": {
+            "id": "10",
+            "time": STAMP,
+            "agent": "codex",
+            "phase": "attempt",
+            "provider": "relay",
+            "model": "gpt",
+            "attempt": 1,
+        },
+        "active": [
+            {
+                "id": 91,
+                "route": 36,
+                "phase": "slot",
+                "agent": "codex",
+                "session": "not-rendered",
+                "ms": 160,
+            }
+        ],
         "models": [
             {"id": "gpt", "name": "GPT", "on": True},
             {"id": "unreachable", "name": "Does not answer", "on": True},
@@ -104,37 +124,18 @@ async def upstream():
         if path == "route-events/snapshot":
             return web.json_response(
                 {
-                    "cursor": CURSOR,
+                    "cursor": state["cursor"],
                     "active": 1,
-                    "routes": [
-                        {
-                            "id": "10",
-                            "time": STAMP,
-                            "agent": "codex",
-                            "phase": "attempt",
-                            "provider": "relay",
-                            "model": "gpt",
-                            "attempt": 1,
-                        },
-                    ],
+                    "routes": [state["route"]],
                 }
             )
         if path == "concurrency":
             return web.json_response(
                 {
                     "requests": 1,
-                    "waiting": 1,
+                    "waiting": len(state["active"]),
                     "tools": 0,
-                    "active": [
-                        {
-                            "id": 91,
-                            "route": 36,
-                            "phase": "slot",
-                            "agent": "codex",
-                            "session": "not-rendered",
-                            "ms": 160,
-                        },
-                    ],
+                    "active": state["active"],
                 }
             )
         if path == "route-events":
@@ -402,7 +403,7 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
     async with httpx.AsyncClient(base_url=served.url) as client:
         await served.sign_in(client)
         gateway = await add_gateway(client, endpoint, "Main gateway")
-        await add_gateway(client, endpoint, "Second gateway")
+        second = await add_gateway(client, endpoint, "Second gateway")
         cookies = [
             {"name": key, "value": value, "url": served.url}
             for key, value in client.cookies.items()
@@ -413,11 +414,44 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         )
         await context.add_cookies(cookies)
         page = await context.new_page()
+        errors = []
+        traffic = []
+        page.on("pageerror", lambda error: errors.append(error))
+        page.on("request", lambda request: traffic.append(request))
         await page.goto(f"{served.url}/magpie?gateway={gateway}")
         shell = page.frame_locator("iframe.frame")
         picker = shell.get_by_role("button", name="Switch gateway: Main gateway")
         await expect(picker).to_be_visible()
-        await expect(shell.locator("[data-provider]").first).to_have_text("backup")
+        feed = shell.locator(".live-log")
+        destination = feed.locator(".live-row .destination .entity b")
+        await expect(destination).to_have_text("relay")
+        await feed.get_by_role("button", name="Queued").click()
+        await expect(destination).to_be_visible()
+        state["cursor"] = "feed:5"
+        state["route"].update(provider="backup", phase="responding")
+        state["active"].clear()
+        await expect(destination).to_have_text("backup")
+        await expect(feed.get_by_role("button", name="Queued")).to_have_attribute(
+            "aria-pressed", "true"
+        )
+        await expect(destination).to_be_hidden()
+        await expect(feed.locator(".empty-line")).to_be_visible()
+        await feed.get_by_role("button", name="In progress").click()
+        await expect(destination).to_be_visible()
+        frame = await (
+            await page.locator("iframe.frame").element_handle()
+        ).content_frame()
+        time_origin = await frame.evaluate("performance.timeOrigin")
+
+        def follows_second(request):
+            if urlsplit(request.url).path != "/api/server/poll":
+                return False
+            return [
+                item["scope"]
+                for item in request.post_data_json["subscriptions"]
+                if item["topic"] == "magpie.routing"
+            ] == [{"gateway": second}]
+
         center = await picker.evaluate("""button => {
                 const a = button.getBoundingClientRect(), b = button.querySelector('.chevron svg').getBoundingClientRect();
                 return {delta: Math.abs(a.y + a.height / 2 - b.y - b.height / 2), width: b.width, right: b.right <= a.right};
@@ -427,10 +461,12 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await expect(shell.locator("#gateway-menu")).to_be_visible()
         if directory := os.environ.get("MAGPIE_SCREENSHOTS"):
             await page.screenshot(path=Path(directory) / "switch-gateway.png")
-        await shell.get_by_role("link", name="Second gateway", exact=False).click()
+        async with page.expect_request(follows_second):
+            await shell.get_by_role("link", name="Second gateway", exact=False).click()
         await expect(
             shell.get_by_role("button", name="Switch gateway: Second gateway")
         ).to_be_visible()
+        await expect(shell.locator("#gateway-menu")).to_be_hidden()
         await shell.get_by_role("link", name="Add gateway", exact=True).click()
         drawer = shell.locator("dialog:modal")
         await expect(drawer).to_be_visible()
@@ -440,7 +476,22 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         )
         await drawer.get_by_role("link", name="Cancel", exact=True).click()
         await expect(drawer).to_have_count(0)
+        await shell.get_by_role("link", name="Add gateway", exact=True).click()
+        add = drawer.get_by_role("button", name="Add", exact=True)
+        await add.click()
+        await expect(drawer.get_by_role("alert")).to_contain_text(
+            "Check the gateway name"
+        )
+        await drawer.get_by_label("Gateway name").fill("Third gateway")
+        await drawer.get_by_label("Service endpoint").fill(endpoint)
+        await drawer.get_by_label("Gateway Key").fill("gateway-test-credential")
+        await add.click()
+        await expect(drawer).to_have_count(0)
+        await expect(
+            shell.get_by_role("button", name="Switch gateway: Third gateway")
+        ).to_be_visible()
         await shell.get_by_role("link", name="Gateway settings", exact=True).click()
+        await expect(feed).to_have_count(0)
         await expect(shell.locator(".management .lantern")).to_have_count(0)
         group = shell.locator("summary").filter(has_text="Team route")
         await expect(group.locator(".tag")).to_have_text("Enabled")
@@ -464,6 +515,11 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await confirmation.get_by_role("button", name="Cancel").click()
         await expect(confirmation).to_be_hidden()
         assert "write" not in state
+        await shell.get_by_role("button", name="Rotate Key", exact=True).click()
+        await confirmation.get_by_role("button", name="Rotate Key", exact=True).click()
+        await expect(
+            shell.locator('form:has(input[value="rotate-key"])').get_by_role("alert")
+        ).to_contain_text("HTTP 403")
 
         form = shell.locator("form").filter(
             has=shell.locator('input[value="rename-key"]')
@@ -494,6 +550,46 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         )
         await shell.locator(".mobile-back").click()
         await expect(shell.locator(".request-list")).to_be_visible()
+        search = shell.get_by_role("searchbox", name="Search request records")
+        await search.fill("gpt")
+        await search.press("Enter")
+        await frame.wait_for_function(
+            "() => new URL(location.href).searchParams.get('q') === 'gpt'"
+        )
+        await shell.get_by_role("link", name="Usage & quotas", exact=True).click()
+        await shell.get_by_role("link", name="Last 7 days", exact=True).click()
+        await expect(shell.locator(".kpi .val").first).to_have_text("8")
+        await frame.evaluate("history.back()")
+        await expect(shell.locator(".kpi .val").first).to_have_text("3")
+        await frame.evaluate("history.forward()")
+        await expect(shell.locator(".kpi .val").first).to_have_text("8")
+        await shell.get_by_role("link", name="Routing", exact=True).click()
+        await expect(destination).to_have_text("backup")
+        await frame.evaluate("history.back()")
+        await expect(shell.locator(".kpi .val").first).to_have_text("8")
+        await frame.evaluate("history.forward()")
+        await expect(destination).to_have_text("backup")
+        assert await frame.evaluate("performance.timeOrigin") == time_origin
+        submissions = [
+            request
+            for request in traffic
+            if request.method == "POST"
+            and urlsplit(request.url).path
+            in ("/ui/magpie/gateways", "/ui/magpie/manage")
+        ]
+        assert len(submissions) == 5
+        assert any(
+            urlsplit(request.url).path == "/ui/magpie/live" for request in traffic
+        )
+        assert not any(
+            request.resource_type == "script"
+            and urlsplit(request.url).path.startswith("/static/magpie/")
+            for request in traffic
+        )
+        assert all(
+            request.headers.get("hx-request") == "true" for request in submissions
+        )
+        assert not errors
 
 
 @pytest.mark.asyncio
@@ -512,6 +608,10 @@ async def test_model_configuration_from_the_browser(served, upstream):
         context = await browser.new_context(viewport={"width": 1200, "height": 840})
         await context.add_cookies(cookies)
         page = await context.new_page()
+        traffic = []
+        errors = []
+        page.on("request", lambda request: traffic.append(request))
+        page.on("pageerror", lambda error: errors.append(error))
         await page.goto(
             f"{served.url}/magpie?gateway={gateway}&view=manage&section=models"
         )
@@ -568,3 +668,14 @@ async def test_model_configuration_from_the_browser(served, upstream):
         assert await shell.locator("body").evaluate(
             "body => body.scrollWidth <= body.clientWidth"
         )
+        submissions = [
+            request
+            for request in traffic
+            if request.method == "POST"
+            and urlsplit(request.url).path == "/ui/magpie/manage"
+        ]
+        assert len(submissions) == 4
+        assert all(
+            request.headers.get("hx-request") == "true" for request in submissions
+        )
+        assert not errors

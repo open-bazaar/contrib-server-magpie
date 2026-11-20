@@ -1,7 +1,7 @@
 {% from 'magpie/parts.html' import client_logo, provider, pair, failure, flag, entry_link, estimate, integer with context %}
 {% set result = 'retried' if filters.get('retried') else 'failed' if filters.get('failed') else 'all' %}
 {% set search_filters = dict(filters, failed=none, retried=none) %}
-<main class="content chats gateway-requests" data-layer="{{ 'thread' if opened else 'list' }}" hx-boost:inherited="false">
+<main class="content chats gateway-requests" data-layer="{{ 'thread' if opened else 'list' }}">
   <div class="panes">
     <section class="pane list request-list" aria-labelledby="request-list-title">
       <header class="list-head">

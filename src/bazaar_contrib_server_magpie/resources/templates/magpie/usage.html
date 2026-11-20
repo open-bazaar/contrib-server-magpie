@@ -1,5 +1,5 @@
 {% from 'magpie/parts.html' import client, provider, integer, count, estimate, failure with context %}
-<main class="content gateway-content usage-content" hx-boost:inherited="false">
+<main class="content gateway-content usage-content">
   <nav class="seg period-seg" aria-label="{{ t.text('magpie.period.title') }}" title="{{ t.text('magpie.period.gateway_clock') }}">
     {% for choice in ('today', '7d') %}<a class="segment{% if period == choice %} on{% endif %}" href="{{ target('usage', period=choice) }}"{% if period == choice %} aria-current="true"{% endif %}>{{ t.text('magpie.period.' ~ choice) }}</a>{% endfor %}
   </nav>

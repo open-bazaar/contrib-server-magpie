@@ -4,10 +4,9 @@
 {% block root %} class="filled magpie"{% endblock %}
 {% block head %}
 <link rel="stylesheet" href="{{ asset('magpie.css') }}">
-<script defer src="{{ asset('magpie.js') }}"></script>
 {% endblock %}
 {% block top %}
-<header class="top gateway-top" hx-boost:inherited="false">
+<header class="top gateway-top">
   <h1>{{ t.text('magpie.title') }}</h1>
   {% if selected %}
   <div class="gateway-picker" x-data="{open:false}" @click.outside="open=false" @keydown.escape.window="open=false">
@@ -16,12 +15,12 @@
     </button>
     <div class="gateway-menu" id="gateway-menu" x-show="open" x-cloak>
       {% for gateway in gateways %}
-      <a class="gateway-option{% if gateway.id == selected.id %} chosen{% endif %}" href="{{ link(tab, gateway.id, period=period if tab in ('usage', 'requests') else none) }}"{% if gateway.id == selected.id %} aria-current="true"{% endif %}>
+      <a class="gateway-option{% if gateway.id == selected.id %} chosen{% endif %}" href="{{ link(tab, gateway.id, period=period if tab in ('usage', 'requests') else none) }}" @click="open=false"{% if gateway.id == selected.id %} aria-current="true"{% endif %}>
         <span class="option-icon"><img class="magpie-mark" src="{{ asset('icons/magpie.svg') }}" alt=""></span><span><strong>{{ gateway.name }}</strong><small>{{ gateway.endpoint }}</small></span>
         {% if gateway.id == selected.id %}<span class="i sm">{% include 'server/icons/check.svg' %}</span>{% endif %}
       </a>
       {% endfor %}
-      {% if account.allows('magpie.manage') %}<div class="picker-divider"></div><a class="gateway-option edit-option" href="{{ target(gateway_edit='edit') }}"><span class="i sm">{% include 'server/icons/settings.svg' %}</span>{{ t.text('magpie.edit_gateway') }}</a>{% endif %}
+      {% if account.allows('magpie.manage') %}<div class="picker-divider"></div><a class="gateway-option edit-option" href="{{ target(gateway_edit='edit') }}" @click="open=false"><span class="i sm">{% include 'server/icons/settings.svg' %}</span>{{ t.text('magpie.edit_gateway') }}</a>{% endif %}
     </div>
   </div>
   {% endif %}
@@ -30,7 +29,7 @@
 {% endblock %}
 {% block body %}
   {% if selected %}
-  <nav class="tabs gateway-tabs" aria-label="{{ t.text('magpie.title') }}" hx-boost:inherited="false">
+  <nav class="tabs gateway-tabs" aria-label="{{ t.text('magpie.title') }}">
     {% for pane, icon in [('routing', 'magpie/icons/activity.svg'), ('requests', 'magpie/icons/list.svg'), ('usage', 'magpie/icons/coins.svg'), ('manage', 'server/icons/settings.svg')] if pane != 'manage' or account.allows('magpie.manage') %}
     <a class="tab{% if tab == pane %} on{% endif %}" href="{{ target(pane) }}"{% if tab == pane %} aria-current="page"{% endif %}>{% include icon %}{{ t.text('magpie.tab.' ~ pane) }}</a>
     {% endfor %}

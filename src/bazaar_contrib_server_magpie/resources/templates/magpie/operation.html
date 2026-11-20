@@ -4,7 +4,7 @@
 {% block root %} class="magpie"{% endblock %}
 {% block head %}<link rel="stylesheet" href="{{ asset('magpie.css') }}">{% endblock %}
 {% block body %}
-<main class="content" hx-boost:inherited="false">
+<main class="content">
   <div data-operation-result>
     {% if error %}{{ failure((error, upstream), t) }}
     {% elif probes is defined and probes is not none %}

@@ -1,0 +1,17 @@
+{% from 'magpie/parts.html' import failure, route with context %}
+{% set shown = namespace(work=false, queue=false) %}
+<div id="magpie-live-{{ selected.id }}" data-topic="{{ live_topic }}" data-scope='{{ {"gateway": selected.id} | tojson }}' data-seen='{{ seen | tojson }}'
+     hx-get="/ui/magpie/live?gateway={{ selected.id }}" hx-trigger="bazaar:change" hx-target="this" hx-swap="outerHTML">
+  {% if errors.get('route-events/snapshot') %}{{ failure(errors['route-events/snapshot'], t) }}{% endif %}
+  {% if errors.get('concurrency') %}{{ failure(errors['concurrency'], t) }}{% endif %}
+  {% set items = live.routes + live.unrouted %}
+  {% for item in items %}
+  {% set state = item.queue if item.get('queue') in ('slot', 'rpm', 'redact') else item.get('phase') or 'started' %}
+  {% set queued = state in ('slot', 'rpm') %}
+  {% if queued %}{% set shown.queue = true %}{% else %}{% set shown.work = true %}{% endif %}
+  {{ route(item, clients, providers, t, state, 'queue' if queued else 'work') }}
+  {% endfor %}
+  {% if not (errors.get('route-events/snapshot') and errors.get('concurrency')) %}
+  <p class="empty-line muted" x-show="filter === 'all' ? {{ (not items) | tojson }} : filter === 'work' ? {{ (not shown.work) | tojson }} : {{ (not shown.queue) | tojson }}">{{ t.text('magpie.live.empty') }}</p>
+  {% endif %}
+</div>

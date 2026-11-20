@@ -71,8 +71,6 @@ html.filled body { display: flex; flex-direction: column; overflow: hidden; }
 .gateway-tabs .tab { white-space: nowrap; }
 .card-hd .more { text-decoration: none; }
 .card-hd .more svg { width: 14px; height: 14px; }
-.feed-state { color: var(--muted); font-size: 11.5px; }
-.feed-state:empty { display: none; }
 .segment { border: 0; border-radius: 7px; background: transparent; color: var(--muted); font: 500 12px/20px var(--font-ui); padding: 3px 10px; cursor: pointer; white-space: nowrap; }
 .segment.on { background: var(--raised); color: var(--text); box-shadow: var(--shadow); font-weight: 600; }
 .live-icon { display: inline-flex; flex: none; }
@@ -173,8 +171,8 @@ html.filled body { display: flex; flex-direction: column; overflow: hidden; }
 .model-test-icon svg { width: 12px; height: 12px; }
 .model-test-state:empty, .chip[data-state] .model-test-icon { display: none; }
 .model-test-pending, .model-tests [data-operation-slot]:empty, .model-edit [data-operation-slot]:empty { display: none; }
-.model-tests[aria-busy="true"] .model-test-pending { display: block; }
-.model-tests[aria-busy="true"] button { cursor: progress; }
+.model-tests.htmx-request .model-test-pending { display: block; }
+.model-tests.htmx-request button { cursor: progress; }
 .model-hint { margin: 0; font-size: 12px; color: var(--muted); }
 .model-pick-hint { padding: 0 18px 12px; }
 .model-edit, .model-add { display: flex; flex-wrap: wrap; align-items: start; gap: 8px 12px; }

@@ -40,8 +40,6 @@
 "magpie.live.queued" = "Queued (snapshot)"
 "magpie.live.tools" = "Running tools (snapshot)"
 "magpie.live.connected" = "Live"
-"magpie.live.reconnecting" = "Reconnecting"
-"magpie.live.unavailable" = "Live feed unavailable"
 "magpie.live.empty" = "No current routing activity."
 "magpie.live.stats" = "Today's routing statistics"
 "magpie.live.stats_hint" = "Attempts through this gateway, by provider and model. Each retry counts separately."

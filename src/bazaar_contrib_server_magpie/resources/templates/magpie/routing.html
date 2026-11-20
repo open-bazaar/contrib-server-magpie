@@ -1,32 +1,15 @@
-{% from 'magpie/parts.html' import client, client_logo, provider, provider_logo, pair, integer, count, estimate, failure, route, flag, entry_link with context %}
-<main class="content gateway-content" hx-boost:inherited="false">
+{% from 'magpie/parts.html' import client, provider, pair, integer, count, estimate, failure, flag, entry_link with context %}
+<main class="content gateway-content">
   <div class="activity-columns">
     <div class="activity-column">
-      <section class="card log live-log" aria-labelledby="routes-title">
+      <section class="card log live-log" aria-labelledby="routes-title" x-data="{ filter: 'all' }">
         <header class="log-hd">
           <h3 id="routes-title">{{ t.text('magpie.live.title') }}</h3>
-          <span class="feed-state" data-live-connection role="status"></span>
           <nav class="seg" aria-label="{{ t.text('magpie.live.title') }}">
-            {% for filter in ('all', 'work', 'queue') %}<button class="segment{% if loop.first %} on{% endif %}" type="button" data-route-filter="{{ filter }}" aria-pressed="{{ 'true' if loop.first else 'false' }}">{{ t.text('magpie.live.' ~ filter) }}</button>{% endfor %}
+            {% for choice in ('all', 'work', 'queue') %}<button class="segment" type="button" :class="{ on: filter === '{{ choice }}' }" :aria-pressed="filter === '{{ choice }}'" @click="filter = '{{ choice }}'">{{ t.text('magpie.live.' ~ choice) }}</button>{% endfor %}
           </nav>
         </header>
-        {% if errors.get('route-events/snapshot') %}{{ failure(errors['route-events/snapshot'], t) }}{% endif %}
-        {% if errors.get('concurrency') %}{{ failure(errors['concurrency'], t) }}{% endif %}
-        <div data-live-routes{% if live.get('cursor') %} data-events="/ui/magpie/events?gateway={{ selected.id }}" data-snapshot="/ui/magpie/snapshot?gateway={{ selected.id }}" data-cursor="{{ live.cursor }}"{% endif %}
-             data-reconnect="{{ t.text('magpie.live.reconnecting') }}" data-unavailable="{{ t.text('magpie.live.unavailable') }}" data-timezone="{{ tz.key if tz else '' }}">
-          {% for item in live.routes %}{{ route(item, clients, providers, t) }}{% endfor %}
-          {% for item in live.unrouted %}{{ route(item, clients, providers, t) }}{% endfor %}
-        </div>
-        <p class="empty-line muted" data-empty-routes{% if live.routes or live.unrouted or (errors.get('route-events/snapshot') and errors.get('concurrency')) %} hidden{% endif %}>{{ t.text('magpie.live.empty') }}</p>
-        <template data-route-template>{{ route({}, clients, providers, t) }}</template>
-        {% for state in ('started','attempt','responding','slot','rpm','redact','upstream','attempt_done') %}
-        <template data-live-state="{{ state }}">{{ flag(state, t, true) }}</template>
-        {% endfor %}
-        {% for id in ((clients | list) + ['bazaar_contrib_codex','codex','claude','opencode']) | unique %}
-        {% set meta = clients.get(id, {}) %}<template data-live-client="{{ id }}" data-name="{{ source_name(id, meta.get('name', '')) }}">{{ client_logo(id, meta.get('icon', '')) }}</template>
-        {% endfor %}
-        {% for id, meta in providers.items() %}<template data-live-provider="{{ id }}" data-name="{{ meta.name }}">{{ provider_logo(id, meta.get('icon', '')) }}</template>{% endfor %}
-        <template data-live-client="">{{ client_logo('') }}</template><template data-live-provider="">{{ provider_logo('') }}</template>
+        {% include 'magpie/live.html' %}
       </section>
       <section class="card log daily-log" aria-labelledby="stats-title">
         <header class="card-hd" title="{{ t.text('magpie.live.stats_hint') }}"><h3 id="stats-title">{{ t.text('magpie.live.stats') }}</h3>

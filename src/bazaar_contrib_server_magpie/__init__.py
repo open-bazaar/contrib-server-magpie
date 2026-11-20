@@ -7,14 +7,14 @@ from importlib.resources import files
 from pathlib import Path
 
 from aiohttp import ClientSession
-from bazaar_contrib_server import SERVER, PermissionItem, SidebarItem
+from bazaar_contrib_server import SERVER, PermissionItem, SidebarItem, Topic
 from bazaar_contrib_server_database import SERVER_DB, SERVER_SCHEMA
 from bazaar_contrib_server_overview import OVERVIEW, OverviewItem
 from bazaar_core import Context, Contrib
 
 from .api import Magpie
 from .gateways import MODULE, Gateways
-from .pages import MANAGE, VIEW, Views
+from .pages import LIVE, MANAGE, VIEW, Views
 
 __all__ = ["magpie"]
 ICON = '<img src="/static/magpie/icons/magpie.svg" width="18" height="18" alt="">'
@@ -39,6 +39,14 @@ async def lifespan(ctx: Context):
             ),
             server.permission(
                 PermissionItem(point=MANAGE, description="magpie.permission.manage")
+            ),
+            server.topic(
+                Topic(
+                    name=LIVE,
+                    fetch=views.live_state,
+                    fields=("gateway",),
+                    permission=VIEW,
+                )
             ),
             server.sidebar(
                 SidebarItem(

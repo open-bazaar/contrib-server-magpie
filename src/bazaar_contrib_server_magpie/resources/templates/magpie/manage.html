@@ -18,13 +18,36 @@
   {% if choices %}<details class="manage-catalog">{{ summary(t.text('magpie.manage.available')) }}{{ catalog_rows(choices) }}</details>{% endif %}
 {% endmacro %}
 {% macro form(operation, id='', provider='') %}
-<form class="manage-form{% if operation == 'test-models' %} model-tests{% endif %}" method="post" action="{{ action_url }}" novalidate data-operation data-unavailable="{{ t.text('magpie.error.unknown_result') }}"{% if operation in ('remove-key','remove','delete','rotate-key') %} data-confirm="{{ t.text('magpie.manage.confirm_' ~ ('rotate' if operation == 'rotate-key' else 'remove')) }}"{% endif %}>
+<form class="manage-form{% if operation == 'test-models' %} model-tests{% endif %}" method="post" action="{{ action_url }}" novalidate
+      hx-post="{{ action_url }}" hx-target="find [data-operation-slot]" hx-select="[data-operation-result]" hx-swap="innerHTML" hx-disable="findAll button"
+      {% if operation in ('remove-key','remove','delete','rotate-key') %}hx-confirm="{{ t.text('magpie.manage.confirm_' ~ ('rotate' if operation == 'rotate-key' else 'remove')) }}"{% endif %}
+      data-unavailable="{{ t.text('magpie.error.unknown_result') }}"
+      @htmx:before:request="$el.querySelector('[data-operation-slot]').replaceChildren()"
+      @htmx:after:request="if ($event.detail.ctx.response.status < 400) $el.reset()"
+      @htmx:error="$el.querySelector('[data-operation-slot]').textContent = $el.dataset.unavailable"
+      @htmx:after:swap="
+        const slot = $el.querySelector('[data-operation-slot]');
+        if (!slot.firstElementChild && $event.detail.ctx.response.status !== 204) slot.textContent = $el.dataset.unavailable;
+        {% if operation == 'test-models' %}slot.querySelectorAll('[data-probe]').forEach(probe => {
+          const chip = $el.querySelector(`button[name=model][value='${CSS.escape(probe.dataset.probe)}']`);
+          if (!chip) return;
+          chip.dataset.state = probe.dataset.state;
+          chip.querySelector('[data-model-state]').textContent = probe.dataset.label;
+          chip.setAttribute('aria-label', chip.dataset.tip + ' · ' + probe.dataset.label);
+        });{% endif %}
+      ">
   <input type="hidden" name="operation" value="{{ operation }}">{% if id %}<input type="hidden" name="id" value="{{ id }}">{% endif %}{% if provider %}<input type="hidden" name="provider" value="{{ provider }}">{% endif %}
   {{ caller() }}<div data-operation-slot aria-live="polite"></div>
 </form>
 {% endmacro %}
 {% macro button(label, style='primary') %}<button class="btn sm {{ style }}" type="submit">{{ t.text('magpie.' ~ label) }}</button>{% endmacro %}
-<main class="content gateway-content" hx-boost:inherited="false">
+<main class="content gateway-content" x-data="{ pending: null }" @htmx:confirm.prevent="
+  const { ctx, issueRequest, dropRequest } = $event.detail;
+  const button = ctx.request.submitter;
+  pending = { label: button.textContent.trim(), message: ctx.confirm, danger: button.classList.contains('danger'), issueRequest, dropRequest };
+  $refs.confirmation.returnValue = '';
+  $refs.confirmation.showModal();
+">
 <nav class="seg period-seg manage-seg" aria-label="{{ t.text('magpie.tab.manage') }}">
   {% for pane in sections %}<a class="segment{% if section == pane %} on{% endif %}" href="{{ target('manage', section=pane) }}"{% if section == pane %} aria-current="page"{% endif %}>{{ t.text('magpie.manage.' ~ pane) }}</a>{% endfor %}
 </nav>
@@ -148,9 +171,13 @@
   {% endif %}
   {% endif %}
 </section>
-<dialog class="dialog manage-confirm" data-operation-confirm role="alertdialog" aria-labelledby="operation-title" aria-describedby="operation-description">
-  <h3 id="operation-title"></h3>
-  <p id="operation-description"></p>
-  <form class="actions" method="dialog"><button class="btn" value="cancel" autofocus>{{ t.text('magpie.cancel') }}</button><button class="btn" value="confirm"></button></form>
+<dialog class="dialog manage-confirm" x-ref="confirmation" role="alertdialog" aria-labelledby="operation-title" aria-describedby="operation-description"
+        @close="$el.returnValue === 'confirm' ? pending.issueRequest() : pending.dropRequest(); pending = null">
+  <h3 id="operation-title" x-text="pending?.label"></h3>
+  <p id="operation-description" x-text="pending?.message"></p>
+  <div class="actions">
+    <button class="btn" type="button" @click="$refs.confirmation.close('cancel')" autofocus>{{ t.text('magpie.cancel') }}</button>
+    <button class="btn" type="button" @click="$refs.confirmation.close('confirm')" :class="{ danger: pending?.danger }" x-text="pending?.label"></button>
+  </div>
 </dialog>
 </main>
