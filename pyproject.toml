@@ -1,6 +1,6 @@
 [project]
 name = "bazaar-contrib-server-magpie"
-version = "0.3.0rc3"
+version = "0.3.0rc4"
 description = "Magpie routing, usage and gateway administration in Bazaar Server"
 readme = "README.md"
 requires-python = ">=3.15"

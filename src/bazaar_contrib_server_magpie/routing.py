@@ -5,7 +5,7 @@ from collections import defaultdict, deque
 
 from .admin import Read
 from .api import CONCURRENCY, SNAPSHOT, Data, Magpie, Rejected
-from .data import attempts, listed_requests, outcome, route_snapshot
+from .data import attempts, listed_requests, outcome, request_usage, route_snapshot
 from .gateways import Connection
 
 RECENT = 5
@@ -95,13 +95,24 @@ def with_ledger(live: Data, ledger: Data) -> Data:
         if row.get("route_id") and row.get("handed_on"):
             handed_on[row["route_id"]].append(row)
 
-    def enrich(route: Data) -> Data:
+    def enrich(route: Data, recorded: Data | None = None) -> Data:
         route_id = route["route_id"]
-        earlier = route.get("failed_attempts") or handed_on.get(route_id, [])
-        latest = earlier[-1] if earlier else {}
+        logged = handed_on.get(route_id, [])
+        earlier = route.get("failed_attempts") or logged
+        preceding = logged if recorded and logged else earlier
+        latest = preceding[-1] if preceding else {}
+        if recorded:
+            route = {
+                **route,
+                "model": recorded.get("model") or route.get("model"),
+                "provider_name": recorded.get("providerName"),
+                "usage": request_usage(recorded),
+                "ms": recorded.get("ms", route.get("ms")),
+                "result": outcome(recorded),
+            }
         changed = bool(latest.get("provider") and route.get("provider")) and (
             latest["provider"],
-            latest.get("served") or latest.get("model"),
+            latest.get("model"),
         ) != (route["provider"], route.get("model"))
         return {**route, "failed_attempts": earlier, "changed_destination": changed}
 
@@ -119,15 +130,7 @@ def with_ledger(live: Data, ledger: Data) -> Data:
             continue
         used.add(route_id)
         recorded = complete.get(route_id)
-        recent.append(
-            enrich(
-                {
-                    **route,
-                    "recorded": recorded is not None,
-                    "result": outcome(recorded) if recorded else route["result"],
-                }
-            )
-        )
+        recent.append(enrich({**route, "recorded": recorded is not None}, recorded))
     # The ledger also covers requests finished before this view started following.
     for route_id, row in complete.items():
         if route_id in used:
@@ -138,14 +141,12 @@ def with_ledger(live: Data, ledger: Data) -> Data:
                     "route_id": route_id,
                     "agent": row.get("agent", ""),
                     "provider": row.get("provider", ""),
-                    "model": row.get("served") or row.get("model", ""),
                     "time": row["t"],
                     "attempt": row.get("tries", 1),
                     "status": row.get("status", 0),
-                    "ms": row.get("ms"),
-                    "result": outcome(row),
                     "recorded": True,
-                }
+                },
+                row,
             )
         )
     for route in routes:

@@ -160,6 +160,17 @@ async def upstream():
                 {**NOW, "calls": 8 if request.query.get("period") == "7d" else 3}
             )
         if path == "usage/requests":
+            if "usage_rows" in state:
+                rows = state["usage_rows"]
+                if route := request.query.get("route"):
+                    rows = [row for row in rows if row.get("route_id") == int(route)]
+                if query := request.query.get("q"):
+                    rows = [row for row in rows if query in row["model"]]
+                offset = int(request.query.get("offset", 0))
+                limit = int(request.query.get("limit", 40))
+                return web.json_response(
+                    {"rows": rows[offset : offset + limit], "total": len(rows)}
+                )
             return web.json_response(
                 {
                     "rows": ROWS if request.query.get("route") else ROWS[:1],
@@ -675,12 +686,18 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         await expect(shell.locator(".kpi .val").first).to_have_text("8")
         await frame.evaluate("history.forward()")
         await expect(destination).to_have_text("backup")
+        state["usage_rows"] = [ROWS[1]]
         state["route"] = None
         state["events"].extend(
             [
                 {
                     "cursor": "feed:7",
-                    "route": {**second_attempt, "phase": "done", "status": 200},
+                    "route": {
+                        **second_attempt,
+                        "phase": "done",
+                        "status": 200,
+                        "model": "deepseek-flash",
+                    },
                 },
                 {
                     "cursor": "feed:8",
@@ -698,8 +715,45 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         completed = feed.locator(".recent-routes .route-entry")
         await expect(completed.first).to_contain_text("Error returned to agent")
         await expect(completed.first).to_contain_text("HTTP 503")
-        await expect(completed.nth(1)).to_contain_text("Succeeded after retry")
+        recorded = completed.nth(1)
+        await expect(recorded).to_contain_text("Succeeded after retry")
+        await expect(recorded.locator(".route-metrics")).to_have_count(0)
+        state["usage_rows"].insert(
+            0,
+            {
+                **ROWS[0],
+                "req": "group/bcn",
+                "model": "glm-5.1",
+                "served": "deepseek-flash",
+                "providerAccount": "Backup account",
+                "effort": "high",
+                "first_text_ms": 275,
+                "in": 200,
+                "cache_read": 780,
+                "cache_write": 20,
+            },
+        )
+        result = recorded.locator("a.live-row")
+        await expect(result.locator(".origin")).to_contain_text("group/bcn")
+        await expect(result.locator(".destination .model")).to_have_text("glm-5.1")
+        await expect(result.locator(".destination")).to_contain_text("Backup account")
+        await expect(result.locator(".reported-model")).to_have_text(
+            "Upstream reported deepseek-flash"
+        )
+        for text in (
+            "Reasoning effort high",
+            "First output",
+            "First text",
+            "Cache hit 78%",
+        ):
+            await expect(result.locator(".route-metrics")).to_contain_text(text)
         assert await frame.evaluate("performance.timeOrigin") == time_origin
+        await result.click()
+        await expect(shell.locator("#request-detail-title")).to_have_text("glm-5.1")
+        await expect(shell.locator(".request-info")).to_contain_text("deepseek-flash")
+        await expect(
+            shell.get_by_role("button", name="Switch gateway: Third gateway")
+        ).to_be_visible()
         submissions = [
             request
             for request in traffic
@@ -719,6 +773,70 @@ async def test_browser_selector_live_feed_and_denial(served, upstream):
         assert all(
             request.headers.get("hx-request") == "true" for request in submissions
         )
+        assert not errors
+
+
+@pytest.mark.asyncio
+async def test_requests_scroll_and_keep_the_list_open(served, upstream):
+    endpoint, state = upstream
+    state["usage_rows"] = [
+        {
+            **ROWS[0],
+            "route_id": 100 + index if index != 44 else 0,
+            "model": f"{'matched' if index < 82 else 'other'}-{index}",
+        }
+        for index in range(87)
+    ]
+    async with httpx.AsyncClient(base_url=served.url) as client:
+        await served.sign_in(client)
+        gateway = await add_gateway(client, endpoint, "Request history")
+        cookies = [
+            {"name": key, "value": value, "url": served.url}
+            for key, value in client.cookies.items()
+        ]
+    async with async_playwright() as driver, await driver.chromium.launch() as browser:
+        context = await browser.new_context(
+            viewport={"width": 1440, "height": 860}, locale="en-US"
+        )
+        await context.add_cookies(cookies)
+        page = await context.new_page()
+        errors = []
+        page.on("pageerror", lambda error: errors.append(error))
+        await page.goto(f"{served.url}/magpie?view=requests&gateway={gateway}")
+        shell = page.frame_locator("iframe.frame")
+        listing = shell.locator(".request-list .convs")
+        rows = listing.locator(".request-row")
+        load = listing.locator(".paging")
+        await expect(rows).to_have_count(40)
+        position = await listing.evaluate(
+            "el => { el.scrollTop = el.scrollHeight; return el.scrollTop; }"
+        )
+        await expect(rows).to_have_count(80)
+        assert position > 0
+        assert await listing.evaluate("el => el.scrollTop") == position
+        await expect(rows.first).to_contain_text("matched-0")
+        await expect(rows.nth(40)).to_contain_text("matched-40")
+        await expect(rows.first).to_have_attribute("aria-current", "true")
+        await rows.nth(44).click()
+        await expect(shell.locator("#request-detail-title")).to_have_text("matched-44")
+        await expect(rows.nth(44)).to_have_attribute("aria-current", "true")
+        await expect(rows.first).not_to_have_attribute("aria-current", "true")
+        await expect(rows).to_have_count(80)
+        await page.set_viewport_size({"width": 390, "height": 844})
+        await expect(listing).to_be_hidden()
+        await shell.get_by_role("link", name="Back to request records").click()
+        await expect(listing).to_be_visible()
+        await expect(rows).to_have_count(80)
+        search = shell.get_by_role("searchbox", name="Search request records")
+        await search.fill("matched")
+        await search.press("Enter")
+        await expect(rows).to_have_count(40)
+        await load.scroll_into_view_if_needed()
+        await expect(rows).to_have_count(80)
+        await load.scroll_into_view_if_needed()
+        await expect(rows).to_have_count(82)
+        await expect(rows.last).to_contain_text("matched-81")
+        await expect(load).to_have_count(0)
         assert not errors
 
 

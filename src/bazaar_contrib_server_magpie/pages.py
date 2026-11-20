@@ -37,6 +37,7 @@ from .data import (
     final_attempt,
     listed_requests,
     outcome,
+    request_usage,
     route_snapshot,
     route_statistics,
     source_name,
@@ -92,6 +93,11 @@ def number(value: str) -> int:
     )
 
 
+def request_period(request: Request) -> str:
+    period = request.query_params.get("period", "today")
+    return period if period in PERIODS else "today"
+
+
 def endpoint(value: str) -> str:
     url = AnyHttpUrl(value)
     if (
@@ -115,7 +121,7 @@ def live_seen(live: Data, errors: dict[str, tuple[str, int]]) -> dict[str, str]:
         live.get("cursor"),
         live["routes"],
         live["unrouted"],
-        live["finished"],
+        live["recent"],
         live["concurrency"],
         errors.get(SNAPSHOT),
         errors.get(CONCURRENCY),
@@ -139,6 +145,7 @@ class Views:
         self.feeds: dict[str, RouteFeed] = {}
         self.routes = [
             Route("/", self.index),
+            Route("/requests/rows", self.request_rows),
             Route("/gateways", self.change_gateway, methods=["POST"]),
             Route("/manage", self.change_config, methods=["POST"]),
             Route("/live", self.live),
@@ -185,6 +192,18 @@ class Views:
             errors[EVENTS] = (error_label(error), error.status)
         return live
 
+    async def live_ledger(
+        self,
+        connection: Connection,
+        read: admin.Read,
+        errors: dict[str, tuple[str, int]],
+    ) -> tuple[Data, Data]:
+        live, ledger = await asyncio.gather(
+            self.live_routes(connection, read, errors),
+            read(REQUESTS, period="today", via="through", limit=RECENT * 3),
+        )
+        return with_ledger(live, ledger), ledger
+
     async def page(
         self,
         request: Request,
@@ -208,8 +227,7 @@ class Views:
             raise HTTPException(404)
         if tab == "manage":
             require(request, MANAGE)
-        period = query.get("period", "today")
-        period = period if period in PERIODS else "today"
+        period = request_period(request)
         errors: dict[str, tuple[str, int]] = {}
         reached = False
 
@@ -228,9 +246,8 @@ class Views:
                 raise HTTPException(404)
         connection = await self.gateways.get(selected.id) if selected else None
         if connection and tab == "routing":
-            live, ledger, today = await asyncio.gather(
-                self.live_routes(connection, read, errors),
-                read(REQUESTS, period="today", via="through", limit=RECENT * 3),
+            (live, ledger), today = await asyncio.gather(
+                self.live_ledger(connection, read, errors),
                 read(USAGE, period="today"),
             )
             failed = {}
@@ -247,7 +264,7 @@ class Views:
                 except Rejected:
                     pass
             values.update(
-                live=with_ledger(live, ledger),
+                live=live,
                 seen=live_seen(live, errors),
                 live_topic=LIVE,
                 statistics=route_statistics(ledger, failed),
@@ -255,7 +272,7 @@ class Views:
                 **routing_catalog(ledger),
             )
         elif connection and tab == "requests":
-            values.update(await self.requests(request, read, period))
+            values.update(await self.requests(request, read, connection.gateway.id))
         elif connection and tab == "usage":
             usage, quotas = await asyncio.gather(
                 read(USAGE, period=period), read(QUOTAS, kept=1)
@@ -307,10 +324,12 @@ class Views:
             **values,
         )
 
-    async def requests(self, request: Request, read: admin.Read, period: str) -> Data:
+    async def request_batch(
+        self, request: Request, read: admin.Read, gateway: str
+    ) -> Data:
         query = request.query_params
         offset = number(query.get("offset", ""))
-        filters: dict[str, str] = {"period": period}
+        filters: dict[str, str] = {"period": request_period(request)}
         filters.update(
             {key: query[key] for key in ("provider", "model", "q") if query.get(key)}
         )
@@ -320,8 +339,47 @@ class Views:
             if query.get(flag) == "1":
                 filters[flag] = "1"
         ledger = await read(REQUESTS, **filters, offset=offset, limit=PER_PAGE)
+        next_offset = offset + PER_PAGE
+        more = ""
+        if next_offset < ledger.get("total", 0):
+            more = (
+                HOME
+                + "requests/rows?"
+                + urlencode({"gateway": gateway, "offset": next_offset, **filters})
+            )
+        return {
+            "ledger": ledger,
+            "rows": listed_requests(ledger.get("rows") or []),
+            "filters": filters,
+            "offset": offset,
+            "more": more,
+        }
+
+    async def request_rows(self, request: Request) -> Response:
+        require(request, VIEW)
+        connection = await self.connection(request)
+        errors: dict[str, tuple[str, int]] = {}
+        gateway = connection.gateway.id
+        batch = await self.request_batch(
+            request, partial(self.read, connection, errors), gateway
+        )
+        return await self.pages.render(
+            request,
+            "magpie/request-rows.html",
+            target=partial(link, gateway=gateway),
+            errors=errors,
+            outcome=outcome,
+            source_name=source_name,
+            stamp=stamp,
+            **batch,
+        )
+
+    async def requests(self, request: Request, read: admin.Read, gateway: str) -> Data:
+        batch = await self.request_batch(request, read, gateway)
+        ledger = batch["ledger"]
         rows = ledger.get("rows") or []
-        shown = listed_requests(rows)
+        shown = batch["rows"]
+        query = request.query_params
         route = number(query.get("route", ""))
         row_query = query.get("row", "")
         row_index = (
@@ -345,21 +403,19 @@ class Views:
             and not rows[row_index].get("route_id")
         ):
             detail = [rows[row_index]]
+        final = final_attempt(detail)
         return {
-            "ledger": ledger,
-            "rows": shown,
+            **batch,
             "detail": detail,
             "trials": [
                 row for row in detail if not row.get("rejected") and row.get("provider")
             ],
-            "final": final_attempt(detail),
+            "final": final,
+            "request_usage": request_usage(final) if final else {},
             "opened": opened,
             "providers": {row["id"]: row for row in ledger.get("providers") or []},
             "current_route": route,
             "current_row": row_index,
-            "filters": filters,
-            "offset": offset,
-            "page_size": PER_PAGE,
         }
 
     async def change_gateway(self, request: Request) -> Response:
@@ -499,7 +555,7 @@ class Views:
         if connection is None:
             return None
         errors: dict[str, tuple[str, int]] = {}
-        live = await self.live_routes(
+        live, _ = await self.live_ledger(
             connection, partial(self.read, connection, errors), errors
         )
         return live_seen(live, errors)
@@ -509,15 +565,12 @@ class Views:
         connection = await self.connection(request)
         errors: dict[str, tuple[str, int]] = {}
         read = partial(self.read, connection, errors)
-        live, ledger = await asyncio.gather(
-            self.live_routes(connection, read, errors),
-            read(REQUESTS, period="today", via="through", limit=RECENT * 3),
-        )
+        live, ledger = await self.live_ledger(connection, read, errors)
         return await self.pages.render(
             request,
             "magpie/live.html",
             selected=connection.gateway,
-            live=with_ledger(live, ledger),
+            live=live,
             seen=live_seen(live, errors),
             live_topic=LIVE,
             errors=errors,
@@ -578,19 +631,18 @@ class Views:
                 return {"gateway": selected, "error": ("unreachable", 502)}
             errors: dict[str, tuple[str, int]] = {}
             read = partial(self.read, connection, errors)
-            live, usage, quotas, info, ledger = await asyncio.gather(
-                self.live_routes(connection, read, errors),
+            (live, ledger), usage, quotas, info = await asyncio.gather(
+                self.live_ledger(connection, read, errors),
                 read(USAGE, period="today"),
                 read(QUOTAS, kept=1),
                 read("/v1"),
-                read(REQUESTS, period="today", via="through", limit=RECENT * 3),
             )
             return {
                 "gateway": selected,
                 "usage": usage,
                 "version": info.get("version"),
                 "quotas": quotas.get("data") or [],
-                "live": with_ledger(live, ledger),
+                "live": live,
                 "seen": live_seen(live, errors),
                 "errors": errors,
                 **routing_catalog(ledger),

@@ -1,0 +1,16 @@
+{% from 'magpie/parts.html' import client_logo, entry_link, failure, request_key with context %}
+{% if errors.get('usage/requests') %}{{ failure(errors['usage/requests'], t) }}{% endif %}
+{% for index, item in rows %}
+{% set key = request_key(item.get('route_id'), index, offset) %}
+{% set current = key == (selected_request | default('')) %}
+{% set state = outcome(item) %}
+{% set address = entry_link(item, index, filters, target, offset) %}
+<a class="conv request-row{% if current %} on{% endif %}" href="{{ address }}" data-request-key="{{ key }}"{% if current %} aria-current="true"{% endif %}
+   hx-get="{{ address }}" hx-target="#magpie-request-opened" hx-select="#magpie-request-opened" hx-swap="outerHTML" hx-push-url="true"
+   :class="{ on: activeRequest === $el.dataset.requestKey }" :aria-current="activeRequest === $el.dataset.requestKey ? 'true' : null">
+  <span class="gav grp">{{ client_logo(item.agent, item.get('icon','')) }}</span>
+  <span class="tx"><span class="tt"><span class="tn">{{ item.get('served') or item.model or '—' }}</span></span><span class="sn">{{ source_name(item.agent, item.get('agentName','')) or '—' }} · {{ item.get('providerName') or item.provider or '—' }}</span></span>
+  <span class="req-meta"><time class="tm" datetime="{{ item.t }}" title="{{ stamp(item.t) | clock }}">{{ stamp(item.t) | time }}</time><span class="{{ 'bad-text' if state in ('failed','handed_on') else 'muted' }}">{{ t.text('magpie.state.' ~ state) }}</span></span>
+</a>
+{% else %}{% if not errors.get('usage/requests') and not offset %}<p class="empty-line muted">{{ t.text('magpie.request.empty') }}</p>{% endif %}{% endfor %}
+{% if more %}<div class="more-rows paging" role="status" hx-get="{{ more }}" hx-trigger="intersect once" hx-swap="outerHTML"><span class="spin" aria-hidden="true"></span>{{ t.text('magpie.request.loading') }}</div>{% endif %}

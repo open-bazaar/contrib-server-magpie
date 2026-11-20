@@ -92,7 +92,6 @@ html.filled body { display: flex; flex-direction: column; overflow: hidden; }
 .gav { width: 40px; height: 40px; border-radius: 12px; display: grid; place-items: center; flex: none; }
 .gav.grp { background: var(--raised); border: 1px solid var(--line); color: var(--text-2); }
 .request-list .req-meta { justify-items: end; }
-.request-pages { display: flex; justify-content: center; gap: 8px; padding: 10px; }
 .attempt-card .canceled .k { background: var(--sunken); color: var(--muted); }
 .attempt-card .k { align-self: start; margin-top: 2px; }
 .attempt-outcome:not(.bad-text) { color: var(--muted); }
@@ -250,6 +249,12 @@ html.filled body { display: flex; flex-direction: column; overflow: hidden; }
 .live-row .route-status { grid-area: status; }
 .live-row .live-duration { grid-area: duration; color: var(--muted); font: 12px/26px var(--font-mono); text-align: end; }
 .live-row .entity b { flex: 0 1 auto; min-width: 0; }
+.live-row:has(> .route-metrics) { grid-template-areas: "time source arrow destination status duration" ". metrics metrics metrics metrics metrics"; row-gap: 5px; }
+.route-secondary { display: block; margin-inline-start: 22px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 11.5px; line-height: 16px; }
+.route-secondary.reported-model { color: var(--text-2); }
+.route-metrics { grid-area: metrics; display: flex; flex-wrap: wrap; column-gap: 12px; color: var(--muted); font-size: 11.5px; line-height: 18px; }
+.route-metrics > span { white-space: nowrap; }
+.route-metrics b { color: var(--text-2); font-weight: 600; }
 .ev.daily-row { grid-template-columns: minmax(230px, 39%) minmax(0, 1fr) auto; min-height: 43px; text-decoration: none; }
 .daily-row:hover, a.live-row:hover { background: var(--surface-2); }
 a.live-row { color: inherit; text-decoration: none; }
@@ -279,6 +284,7 @@ a.live-row { color: inherit; text-decoration: none; }
 
 .gateway-requests .panes { grid-template-columns: 322px minmax(0, 1fr) 264px; grid-template-areas: "list detail info"; }
 .request-list { grid-area: list; }
+.request-opened { display: contents; }
 .request-detail { grid-area: detail; }
 .request-info { grid-area: info; }
 .list-head { padding: 12px 15px 8px; border-bottom: 1px solid var(--line-soft); }
@@ -368,6 +374,7 @@ a.live-row { color: inherit; text-decoration: none; }
     padding-inline: 12px;
   }
   .route-failures .live-row { grid-template-areas: "destination status duration"; }
+  .live-row:has(> .route-metrics) { grid-template-areas: "source status duration" "destination status duration" "metrics metrics metrics"; }
   .live-row .tm, .live-row .direction { display: none; }
   .log-hd { padding: 8px 12px; gap: 6px; }
   .log-hd .segment { padding: 2px 5px; white-space: nowrap; }
@@ -378,7 +385,7 @@ a.live-row { color: inherit; text-decoration: none; }
 }
 :root[data-layout="narrow"] .gateway-requests.content { padding: 0; }
 :root[data-layout="narrow"] .gateway-requests .panes { display: flex; flex-direction: column; overflow-y: auto; }
-:root[data-layout="narrow"] .gateway-requests[data-layer="thread"] .request-list { display: none; }
+:root[data-layout="narrow"] .gateway-requests .panes:has(> .request-opened[data-layer="thread"]) .request-list { display: none; }
 :root[data-layout="narrow"] .gateway-requests .request-info { padding: 0 16px 16px; overflow: visible; border-top: 0; }
 @media (max-width: 660px) {
   .gateway-tabs { flex-wrap: wrap; }

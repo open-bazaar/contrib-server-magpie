@@ -1,7 +1,11 @@
-{% from 'magpie/parts.html' import client_logo, provider, pair, failure, flag, entry_link, estimate, integer with context %}
+{% from 'magpie/parts.html' import client_logo, provider, pair, flag, estimate, integer, request_key with context %}
 {% set result = 'retried' if filters.get('retried') else 'failed' if filters.get('failed') else 'all' %}
 {% set search_filters = dict(filters, failed=none, retried=none) %}
-<main class="content chats gateway-requests" data-layer="{{ 'thread' if opened else 'list' }}">
+{% set selected_request = request_key(current_route, current_row, offset) %}
+{% set back = target('requests', offset=offset or none, **filters) %}
+<main class="content chats gateway-requests"
+      x-data="{ activeRequest: $el.querySelector('#magpie-request-opened').dataset.requestKey }"
+      @htmx:after:swap.window="activeRequest = $el.querySelector('#magpie-request-opened').dataset.requestKey">
   <div class="panes">
     <section class="pane list request-list" aria-labelledby="request-list-title">
       <header class="list-head">
@@ -22,32 +26,19 @@
         <nav class="chips drilldown" aria-label="{{ t.text('magpie.provider_model') }}"><a class="chip on" href="{{ target('requests', **dict(filters, provider=none, model=none)) }}" title="{{ t.text('magpie.request.clear') }}"><span>{{ filters.get('provider', '') }} {{ filters.get('model', '') }}</span>{% include 'magpie/icons/close.svg' %}</a></nav>
         {% endif %}
       </header>
-      {% if errors.get('usage/requests') %}{{ failure(errors['usage/requests'], t) }}{% endif %}
       <div class="convs">
-        {% for index, item in rows %}
-        {% set route = item.get('route_id', 0) %}
-        {% set current = (route and route == current_route) or (not route and index == current_row) %}
-        {% set state = outcome(item) %}
-        <a class="conv request-row{% if current %} on{% endif %}" href="{{ entry_link(item, index, filters, target, offset) }}"{% if current %} aria-current="true"{% endif %}>
-          <span class="gav grp">{{ client_logo(item.agent, item.get('icon','')) }}</span>
-          <span class="tx"><span class="tt"><span class="tn">{{ item.get('served') or item.model or '—' }}</span></span><span class="sn">{{ source_name(item.agent, item.get('agentName','')) or '—' }} · {{ item.get('providerName') or item.provider or '—' }}</span></span>
-          <span class="req-meta"><time class="tm" datetime="{{ item.t }}" title="{{ stamp(item.t) | clock }}">{{ stamp(item.t) | time }}</time><span class="{{ 'bad-text' if state in ('failed','handed_on') else 'muted' }}">{{ t.text('magpie.state.' ~ state) }}</span></span>
-        </a>
-        {% else %}{% if not errors.get('usage/requests') %}<p class="empty-line muted">{{ t.text('magpie.request.empty') }}</p>{% endif %}{% endfor %}
-        {% if offset or offset + page_size < ledger.get('total', 0) %}<footer class="request-pages">
-          {% if offset %}<a class="btn sm" href="{{ target('requests', offset=[offset - page_size, 0] | max, **filters) }}">{{ t.text('magpie.previous') }}</a>{% endif %}
-          {% if offset + page_size < ledger.get('total', 0) %}<a class="btn sm" href="{{ target('requests', offset=offset + page_size, **filters) }}">{{ t.text('magpie.next') }}</a>{% endif %}
-        </footer>{% endif %}
+        {% include 'magpie/request-rows.html' %}
       </div>
     </section>
 
+    <div id="magpie-request-opened" class="request-opened" data-layer="{{ 'thread' if opened else 'list' }}" data-request-key="{{ selected_request }}">
     {% if detail %}
     {% set row = final or detail[-1] %}
     <article class="pane request-detail" aria-labelledby="request-detail-title">
       <header class="t-hd">
-        <a class="icon-btn request-back mobile-back" href="{{ target('requests', offset=offset or none, **filters) }}" aria-label="{{ t.text('magpie.request.back') }}">{% include 'server/icons/chevron-left.svg' %}</a>
+        <a class="icon-btn request-back mobile-back" href="{{ back }}" hx-get="{{ back }}" hx-target="#magpie-request-opened" hx-select="#magpie-request-opened" hx-swap="outerHTML" hx-push-url="true" aria-label="{{ t.text('magpie.request.back') }}">{% include 'server/icons/chevron-left.svg' %}</a>
         <span class="gav grp">{{ client_logo(row.agent, row.get('icon','')) }}</span>
-        <div class="hd-tx"><h3 id="request-detail-title">{{ row.get('served') or row.model or '—' }}</h3><div class="sub">{{ source_name(row.agent, row.get('agentName','')) or '—' }} · {{ row.get('providerName') or row.provider or '—' }} · <time datetime="{{ row.t }}" title="{{ stamp(row.t) | clock }}">{{ stamp(row.t) | time }}</time></div></div>
+        <div class="hd-tx"><h3 id="request-detail-title">{{ row.model or row.get('served') or '—' }}</h3><div class="sub">{{ source_name(row.agent, row.get('agentName','')) or '—' }} · {{ row.get('providerName') or row.provider or '—' }} · <time datetime="{{ row.t }}" title="{{ stamp(row.t) | clock }}">{{ stamp(row.t) | time }}</time></div></div>
         <div class="actions">{{ flag(outcome(row), t) }}</div>
       </header>
       <div class="request-body magpie-detail-body">
@@ -73,19 +64,27 @@
     <aside class="pane info request-info" aria-label="{{ t.text('magpie.request.details') }}">
       <section class="block"><h4>{% include 'magpie/icons/file-text.svg' %}{{ t.text('magpie.request.details') }}</h4>
         {{ pair(t.text('magpie.request.route'), current_route or none) }}
+        {% if request_usage.get('requested') %}{{ pair(t.text('magpie.request.requested'), request_usage.requested) }}{% endif %}
+        {% if request_usage.get('account') %}{{ pair(t.text('magpie.request.account'), request_usage.account) }}{% endif %}
+        {% if request_usage.get('wire') and request_usage.wire != row.model %}{{ pair(t.text('magpie.request.wire'), request_usage.wire) }}{% endif %}
+        {% if request_usage.get('reported') %}{{ pair(t.text('magpie.request.reported'), request_usage.reported) }}{% endif %}
+        {% if request_usage.get('effort') %}{{ pair(t.text('magpie.request.effort'), request_usage.effort) }}{% endif %}
         {{ pair(t.text('magpie.request.duration'), row.ms | duration('compact') if row.get('ms') is not none else none) }}
         {{ pair(t.text('magpie.request.first'), row.ttft_ms | duration('compact') if row.get('ttft_ms') else none) }}
+        {% if request_usage.get('first_text') %}{{ pair(t.text('magpie.request.first_text'), request_usage.first_text | duration('compact')) }}{% endif %}
       </section>
       {% if final %}
       <section class="block"><h4>{% include 'magpie/icons/coins.svg' %}{{ t.text('magpie.request.breakdown') }}</h4>
         {{ pair(t.text('magpie.request.input'), integer(final.get('in'))) }}
         {{ pair(t.text('magpie.request.cache_read'), integer(none if final.get('cache_unknown') else final.get('cache_read'))) }}
         {{ pair(t.text('magpie.request.cache_write'), integer(none if final.get('cache_unknown') else final.get('cache_write'))) }}
+        {% if request_usage.cache_hit is not none %}{{ pair(t.text('magpie.request.cache_hit'), request_usage.cache_hit ~ '%') }}{% endif %}
         {{ pair(t.text('magpie.request.output'), integer(final.get('out'))) }}
         {{ pair(t.text('magpie.usage.cost'), estimate(final.cost) if final.get('priced') else none) }}
       </section>
       {% endif %}
     </aside>
-    {% else %}<div class="pane request-detail gone">{% if opened %}<a class="btn sm request-back mobile-back" href="{{ target('requests', offset=offset or none, **filters) }}">{{ t.text('magpie.request.back') }}</a>{% endif %}<p>{{ t.text('magpie.request.missing' if opened else 'magpie.request.select') }}</p></div>{% endif %}
+    {% else %}<div class="pane request-detail gone">{% if opened %}<a class="btn sm request-back mobile-back" href="{{ back }}" hx-get="{{ back }}" hx-target="#magpie-request-opened" hx-select="#magpie-request-opened" hx-swap="outerHTML" hx-push-url="true">{{ t.text('magpie.request.back') }}</a>{% endif %}<p>{{ t.text('magpie.request.missing' if opened else 'magpie.request.select') }}</p></div>{% endif %}
+    </div>
   </div>
 </main>

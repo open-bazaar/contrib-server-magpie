@@ -48,6 +48,28 @@ def totals_tokens(row: Data) -> int | None:
     )
 
 
+def request_usage(row: Data) -> Data:
+    sent = row.get("wire") or row.get("model")
+    served = row.get("served")
+    read = row.get("cache_read", 0)
+    prompt = row.get("in", 0) + read + row.get("cache_write", 0)
+    return {
+        "requested": row.get("req"),
+        "account": row.get("providerAccount"),
+        "wire": row.get("wire"),
+        "reported": served if served != sent else None,
+        "effort": row.get("effort"),
+        "first_output": row.get("ttft_ms"),
+        "first_text": row.get("first_text_ms"),
+        "tokens": prompt + row["out"] if "out" in row else None,
+        "cache_hit": (
+            round(100 * read / prompt)
+            if prompt and "cache_read" in row and not row.get("cache_unknown")
+            else None
+        ),
+    }
+
+
 def failure_type(row: Data) -> str:
     status, kind = row.get("status"), row.get("err_type", "")
     if status == 429 or kind in ("rate_limit_error", "usage_limit_reached"):

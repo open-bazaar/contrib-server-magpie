@@ -24,6 +24,7 @@
 {% macro client(source, label, icon='') %}<span class="entity">{{ client_logo(source, icon) }}<b>{{ label or '—' }}</b></span>{% endmacro %}
 {% macro provider(key, name, model='', icon='') %}<span class="entity">{{ provider_logo(key, icon) }}<b>{{ name or key or '—' }}</b>{% if model %}<span class="model mono">{{ model }}</span>{% endif %}</span>{% endmacro %}
 {% macro entry_link(row, index, filters, target, offset=0) %}{{ target('requests', route=row.get('route_id'), row=index if not row.get('route_id') else none, offset=offset or none, **filters) }}{% endmacro %}
+{% macro request_key(route, index, offset) %}{% if route %}r{{ route }}{% elif index is not none %}{{ offset }}:{{ index }}{% endif %}{% endmacro %}
 {% macro route_status(item, state, t) %}
 {% set result = 'agent_error' if item.get('result') == 'failed' else item.get('result') %}
 {% set label = result or ('attempt_failed' if item.get('failed') else state) %}
@@ -62,17 +63,34 @@
 {% macro route(item, clients, providers, t, state, group, gateway) %}
 {% set source = item.get('agent', '') %}{% set destination = item.get('provider', '') %}
 {% set from_client = clients.get(source, {}) %}{% set to_provider = providers.get(destination, {}) %}
+{% set usage = item.get('usage', {}) %}
 {% set when = item.get('time') or item.get('started') %}
 {% set elapsed = item.get('elapsed') if item.get('elapsed') is not none else item.get('ms') %}
 {% set element = 'a' if item.get('recorded') else 'div' %}
 <div class="route-entry" x-show="filter === 'all' || filter === '{{ group }}'">
 <{{ element }} class="ev live-row"{% if element == 'a' %} href="{{ link('requests', gateway, route=item.route_id, via='through') }}"{% endif %}>
   <time class="tm"{% if when %} datetime="{{ when }}"{% endif %}>{{ (stamp(when) | time)[:5] if when else '—' }}</time>
-  <span class="w origin entity"><span class="live-icon">{{ client_logo(source, from_client.get('icon', '')) }}</span><b>{{ source_name(source, from_client.get('name', '')) or '—' }}</b></span>
+  <span class="w origin">
+    <span class="entity"><span class="live-icon">{{ client_logo(source, from_client.get('icon', '')) }}</span><b>{{ source_name(source, from_client.get('name', '')) or '—' }}</b></span>
+    {% if usage.get('requested') %}<small class="route-secondary mono" title="{{ t.text('magpie.request.requested') }} · {{ usage.requested }}">{{ usage.requested }}</small>{% endif %}
+  </span>
   <span class="direction">{% include 'server/icons/chevron-right.svg' %}</span>
-  <span class="destination">{% if destination %}{{ provider(destination, to_provider.get('name'), item.get('model', ''), to_provider.get('icon', '')) }}{% else %}<span class="muted">{{ t.text('magpie.state.' ~ state) }}</span>{% endif %}</span>
+  <span class="destination">
+    {% if destination %}{{ provider(destination, to_provider.get('name') or item.get('provider_name'), item.get('model', ''), to_provider.get('icon', '')) }}{% else %}<span class="muted">{{ t.text('magpie.state.' ~ state) }}</span>{% endif %}
+    {% if usage.get('account') %}<small class="route-secondary" title="{{ usage.account }}">{{ usage.account }}</small>{% endif %}
+    {% if usage.get('reported') %}<small class="route-secondary reported-model" title="{{ t.text('magpie.live.reported', {'model': usage.reported}) }}">{{ t.text('magpie.live.reported', {'model': usage.reported}) }}</small>{% endif %}
+  </span>
   {{ route_status(item, state, t) }}
   <span class="live-duration">{{ elapsed | duration('compact') if elapsed is not none else '—' }}</span>
+  {% if usage.get('effort') or usage.get('first_output') or usage.get('first_text') or usage.get('tokens') is not none or usage.get('cache_hit') is not none %}
+  <span class="route-metrics">
+    {% if usage.effort %}<span>{{ t.text('magpie.request.effort') }} <b>{{ usage.effort }}</b></span>{% endif %}
+    {% if usage.first_output %}<span>{{ t.text('magpie.request.first') }} <b>{{ usage.first_output | duration('compact') }}</b></span>{% endif %}
+    {% if usage.first_text %}<span>{{ t.text('magpie.request.first_text') }} <b>{{ usage.first_text | duration('compact') }}</b></span>{% endif %}
+    {% if usage.tokens is not none %}<span><b>{{ count(usage.tokens) }}</b> {{ t.text('magpie.usage.tokens') }}</span>{% endif %}
+    {% if usage.cache_hit is not none %}<span>{{ t.text('magpie.request.cache_hit') }} <b>{{ usage.cache_hit }}%</b></span>{% endif %}
+  </span>
+  {% endif %}
 </{{ element }}>
 {{ route_failures(item, providers, t) }}
 </div>
